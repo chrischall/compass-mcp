@@ -7,7 +7,7 @@
   },
   "metadata": {
     "description": "MCP server for Compass — search listings, fetch property details, market reports, saved homes. Routes through the user signed-in compass.com tab via the fetchproxy browser extension to dodge bot detection.",
-    "version": "0.4.0"
+    "version": "0.4.1"
   },
   "plugins": [
     {
@@ -15,7 +15,7 @@
       "displayName": "Compass",
       "source": "./",
       "description": "MCP server for Compass — search listings, get property details, market reports, saved homes",
-      "version": "0.4.0",
+      "version": "0.4.1",
       "author": {
         "name": "Chris Hall"
       },
