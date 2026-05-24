@@ -1,0 +1,62 @@
+{
+  "$schema": "https://raw.githubusercontent.com/anthropics/dxt/main/dist/mcpb-manifest.schema.json",
+  "manifest_version": "0.3",
+  "name": "compass-mcp",
+  "display_name": "Compass",
+  "version": "0.1.0",
+  "description": "Compass real-estate access for Claude — search listings, fetch property details, market reports, saved homes",
+  "author": {
+    "name": "Chris Chall",
+    "email": "chris.c.hall@gmail.com",
+    "url": "https://github.com/chrischall"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/chrischall/compass-mcp"
+  },
+  "homepage": "https://github.com/chrischall/compass-mcp",
+  "support": "https://github.com/chrischall/compass-mcp/issues",
+  "license": "MIT",
+  "keywords": [
+    "compass",
+    "real-estate",
+    "property",
+    "housing"
+  ],
+  "server": {
+    "type": "node",
+    "entry_point": "dist/bundle.js",
+    "mcp_config": {
+      "command": "node",
+      "args": [
+        "${__dirname}/dist/bundle.js"
+      ]
+    }
+  },
+  "tools": [
+    {
+      "name": "compass_search_properties",
+      "description": "Search Compass listings by location and optional filters"
+    },
+    {
+      "name": "compass_get_property",
+      "description": "Fetch a property's full details by Compass URL or property_id+listing_id"
+    },
+    {
+      "name": "compass_get_market_report",
+      "description": "Market report for a Compass region (median prices, days on market, YoY)"
+    },
+    {
+      "name": "compass_get_saved_homes",
+      "description": "The signed-in user's favorited homes"
+    },
+    {
+      "name": "compass_get_saved_searches",
+      "description": "The signed-in user's saved searches"
+    },
+    {
+      "name": "compass_calculate_mortgage",
+      "description": "Local PITI mortgage-payment calculator — no network"
+    }
+  ]
+}

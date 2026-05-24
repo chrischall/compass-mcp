@@ -1,0 +1,35 @@
+{
+  "$schema": "https://anthropic.com/claude-code/marketplace.schema.json",
+  "name": "compass-mcp",
+  "owner": {
+    "name": "Chris Hall",
+    "email": "chris.c.hall@gmail.com"
+  },
+  "metadata": {
+    "description": "MCP server for Compass — search listings, fetch property details, market reports, saved homes. Routes through the user signed-in compass.com tab via the fetchproxy browser extension to dodge bot detection.",
+    "version": "0.1.0"
+  },
+  "plugins": [
+    {
+      "name": "compass-mcp",
+      "displayName": "Compass",
+      "source": "./",
+      "description": "MCP server for Compass — search listings, get property details, market reports, saved homes",
+      "version": "0.1.0",
+      "author": {
+        "name": "Chris Hall"
+      },
+      "homepage": "https://github.com/chrischall/compass-mcp",
+      "repository": "https://github.com/chrischall/compass-mcp",
+      "license": "MIT",
+      "keywords": [
+        "compass",
+        "real-estate",
+        "property",
+        "housing",
+        "mcp"
+      ],
+      "category": "productivity"
+    }
+  ]
+}
