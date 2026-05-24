@@ -2,7 +2,7 @@
 
 Compass real-estate access as an MCP server for Claude — search listings, fetch property details, photo galleries, price history, and run affordability/mortgage math, all via natural language.
 
-> ⚠️ Compass does not publish a public consumer API. This server scrapes the same server-rendered HTML compass.com itself ships to your browser, routed through your own signed-in browser tab via the [fetchproxy](https://github.com/chrischall/fetchproxy) extension. AWS WAF sees a real browser session, not a Node process — but you should still treat this as informal use of Compass's website. Use at your own discretion.
+> ⚠️ Compass does not publish a public consumer API. This server scrapes the same server-rendered HTML compass.com itself ships to your browser, routed through your own signed-in browser tab via the [fetchproxy](https://github.com/chrischall/fetchproxy) extension. Every request acts on behalf of your existing session — your cookies, your TLS, your JS context — exactly as if you'd clicked it in the browser yourself. Treat this as informal use of Compass's website. Use at your own discretion.
 
 ## Tools
 
@@ -101,9 +101,9 @@ Open compass.com and sign in. That's all the auth this server needs.
 └────────────────┘          └──────────────────┘        │  (separate)      │   cookies)    └─────────────┘
 ```
 
-The MCP server runs in Node, but every HTTP call to compass.com is dispatched into your live browser tab through the fetchproxy extension. AWS WAF / DataDome see a real browser making a real request from a real session — TLS fingerprint, cookies, JS execution all match the page that's already on screen. No headless browser, no impersonation, no proxy farm.
+The MCP server runs in Node, but every HTTP call to compass.com is dispatched into your live browser tab through the fetchproxy extension. Each request rides your existing session — TLS fingerprint, cookies, and JS execution context all match the page that's already on screen. No headless browser stand-in, no separate identity, no third-party proxy: just your real browser, acting on its own behalf, with the MCP server picking what to ask for.
 
-Compass's `/stingray/...` JSON endpoints respond with a `{}&&` anti-CSRF prefix before the JSON body; the client strips it transparently.
+Compass's pages are SSR React with no public JSON API — every tool extracts data from inline-script globals (`global.uc.sharedReactAppProps` on search pages, `window.__INITIAL_DATA__.props.listingRelation.listing` on homedetails). The client wraps that into the tool surface so callers never have to parse HTML themselves.
 
 ## Commands
 
