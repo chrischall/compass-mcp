@@ -3,7 +3,10 @@
 // What we verify is the path → URL prepending and the discriminated-
 // union mapping (ok:true → triple, ok:false → throw).
 import { describe, it, expect, vi } from 'vitest';
-import { FetchproxyTransport } from '../src/transport-fetchproxy.js';
+import {
+  FetchproxyTimeoutError,
+  FetchproxyTransport,
+} from '../src/transport-fetchproxy.js';
 
 type Inner = {
   listen: ReturnType<typeof vi.fn>;
@@ -92,6 +95,42 @@ describe('FetchproxyTransport', () => {
     await expect(t.fetch({ path: '/x', method: 'GET' })).rejects.toThrow(
       /extension offline/
     );
+  });
+
+  it('throws FetchproxyTimeoutError when the inner fetch never resolves', async () => {
+    const t = new FetchproxyTransport({ version: '0.0.0', fetchTimeoutMs: 25 });
+    const inner = stubInner();
+    // Never resolves — simulates a frozen tab / dropped extension.
+    inner.fetch.mockReturnValue(new Promise(() => {}));
+    installInner(t, inner);
+
+    await expect(
+      t.fetch({ path: '/slow', method: 'GET' })
+    ).rejects.toBeInstanceOf(FetchproxyTimeoutError);
+  });
+
+  it('does not fire the timeout when the inner fetch resolves in time', async () => {
+    const t = new FetchproxyTransport({ version: '0.0.0', fetchTimeoutMs: 1000 });
+    const inner = stubInner();
+    inner.fetch.mockImplementation(
+      () =>
+        new Promise((resolve) =>
+          setTimeout(
+            () =>
+              resolve({
+                ok: true,
+                status: 200,
+                body: 'ok',
+                url: 'https://www.compass.com/x',
+              }),
+            10
+          )
+        )
+    );
+    installInner(t, inner);
+
+    const result = await t.fetch({ path: '/x', method: 'GET' });
+    expect(result.status).toBe(200);
   });
 
   it('start/close delegate to the inner FetchproxyServer', async () => {
