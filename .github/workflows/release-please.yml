@@ -83,7 +83,7 @@ jobs:
           import zipfile, pathlib, os
 
           version = os.environ["VERSION"]
-          skill_name = "redfin-mcp"
+          skill_name = "compass-mcp"
           out = pathlib.Path(f"{skill_name}-{version}.skill")
 
           with zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED) as zf:
@@ -95,7 +95,7 @@ jobs:
       - name: Build .mcpb bundle
         run: |
           npx @anthropic-ai/mcpb pack
-          mv redfin-mcp.mcpb "redfin-mcp-${VERSION}.mcpb"
+          mv compass-mcp.mcpb "compass-mcp-${VERSION}.mcpb"
 
       # Idempotent: skip if this version is already on the registry.
       - name: Publish to npm
@@ -136,7 +136,7 @@ jobs:
           npx --yes clawhub login --token "$CLAWHUB_TOKEN" --no-browser
           SKILL_DIR=$(mktemp -d)
           cp SKILL.md "$SKILL_DIR/"
-          npx --yes clawhub publish "$SKILL_DIR" --version "${VERSION}" --slug redfin-mcp
+          npx --yes clawhub publish "$SKILL_DIR" --version "${VERSION}" --slug compass-mcp
 
       # release-please already created the GitHub Release with CHANGELOG
       # content; just attach the build artifacts. --clobber so re-running
@@ -146,6 +146,6 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           gh release upload "${{ needs.release-please.outputs.tag_name }}" \
-            "redfin-mcp-${VERSION}.skill" \
-            "redfin-mcp-${VERSION}.mcpb" \
+            "compass-mcp-${VERSION}.skill" \
+            "compass-mcp-${VERSION}.mcpb" \
             --clobber
