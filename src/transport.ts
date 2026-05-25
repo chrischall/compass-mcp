@@ -28,6 +28,18 @@ export interface FetchResult {
   url: string;
 }
 
+/** Diagnostic snapshot returned by `CompassTransport.status()`. */
+export interface BridgeStatus {
+  /** Role the underlying server elected (host vs peer). `null` until `start()` resolves. */
+  role: 'host' | 'peer' | null;
+  /** The WebSocket port. Hosts bind it; peers tunnel through it. */
+  port: number;
+  /** MCP server version announced to the extension. */
+  serverVersion: string;
+  /** Default per-request timeout in ms. */
+  fetchTimeoutMs: number;
+}
+
 export interface CompassTransport {
   /** Bring the transport up. Idempotent. */
   start(): Promise<void>;
@@ -38,4 +50,7 @@ export interface CompassTransport {
   /** Round-trip one request through the bridge. Resolves to a result
    *  triple even for non-2xx statuses — the client maps HTTP errors. */
   fetch(init: FetchInit): Promise<FetchResult>;
+
+  /** Diagnostic snapshot of the bridge. Safe to call any time. */
+  status(): BridgeStatus;
 }

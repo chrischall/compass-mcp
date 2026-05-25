@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.4.3](https://github.com/chrischall/compass-mcp/compare/v0.4.2...v0.4.3) (2026-05-25)
+
+
+### Bug Fixes
+
+* **transport:** 30s per-request timeout on fetchproxy bridge ([#7](https://github.com/chrischall/compass-mcp/issues/7)) ([c94b39c](https://github.com/chrischall/compass-mcp/commit/c94b39c90800fc1adc7785fd5e5709ccf7a2af6d))
+
+## [0.4.2](https://github.com/chrischall/compass-mcp/compare/v0.4.1...v0.4.2) (2026-05-24)
+
+
+### Bug Fixes
+
+* **ci:** replace redfin leftovers in release-please publish steps ([#5](https://github.com/chrischall/compass-mcp/issues/5)) ([90e8f09](https://github.com/chrischall/compass-mcp/commit/90e8f09cf5522a8bab0f1afe4ca9519e20b1f44e))
+
 ## 0.4.1 (2026-05-24)
 
 

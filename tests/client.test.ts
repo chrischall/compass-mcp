@@ -19,6 +19,12 @@ function stubTransport(
     start: vi.fn().mockResolvedValue(undefined),
     close: vi.fn().mockResolvedValue(undefined),
     fetch: vi.fn().mockImplementation(handler),
+    status: vi.fn().mockReturnValue({
+      role: 'host',
+      port: 37149,
+      serverVersion: '0.0.0',
+      fetchTimeoutMs: 30_000,
+    }),
   };
 }
 
