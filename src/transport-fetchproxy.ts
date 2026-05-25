@@ -80,9 +80,11 @@ export class FetchproxyTransport implements CompassTransport {
       headers: init.headers,
       body: init.body,
     });
-    // Race the request against a timeout. The bridge has no native
-    // deadline, so a frozen tab or dropped extension connection would
-    // otherwise hang the whole MCP call indefinitely.
+    // Attach a no-op rejection handler up front so a WS drop or other
+    // late failure on `inner` — arriving AFTER the race already settled
+    // on the timeout side — doesn't become an unhandled rejection that
+    // crashes the MCP server in Node ≥15.
+    inner.catch(() => {});
     let timer: ReturnType<typeof setTimeout> | undefined;
     const result = await Promise.race([
       inner,

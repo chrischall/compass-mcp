@@ -109,6 +109,29 @@ describe('FetchproxyTransport', () => {
     ).rejects.toBeInstanceOf(FetchproxyTimeoutError);
   });
 
+  it('swallows a late rejection on inner so the post-timeout WS drop is not an unhandled rejection', async () => {
+    const t = new FetchproxyTransport({ version: '0.0.0', fetchTimeoutMs: 25 });
+    const inner = stubInner();
+    // inner.fetch resolves nothing for the race, but then rejects later —
+    // simulates a WebSocket drop happening AFTER the deadline already fired.
+    inner.fetch.mockImplementation(
+      () =>
+        new Promise((_, reject) => {
+          setTimeout(() => reject(new Error('ws closed unexpectedly')), 75);
+        })
+    );
+    installInner(t, inner);
+
+    // The transport.fetch call should reject with the timeout error first.
+    await expect(t.fetch({ path: '/x', method: 'GET' })).rejects.toBeInstanceOf(
+      FetchproxyTimeoutError
+    );
+    // Now let the late rejection settle. The no-op handler we attached
+    // up front should consume it; if not, vitest reports an unhandled
+    // rejection and fails the run.
+    await new Promise((r) => setTimeout(r, 100));
+  });
+
   it('does not fire the timeout when the inner fetch resolves in time', async () => {
     const t = new FetchproxyTransport({ version: '0.0.0', fetchTimeoutMs: 1000 });
     const inner = stubInner();
