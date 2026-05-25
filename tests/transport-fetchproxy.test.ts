@@ -117,6 +117,7 @@ describe('FetchproxyTransport', () => {
       ok: false,
       error:
         'tab fetch failed: Error: Could not establish connection. Receiving end does not exist.',
+      kind: 'content_script_unreachable',
     });
     installInner(t, inner);
 
@@ -136,12 +137,17 @@ describe('FetchproxyTransport', () => {
     }
   });
 
-  it('matches the "Receiving end does not exist" half of the SW-eviction string', async () => {
+  it('routes content_script_unreachable kind to FetchproxyBridgeDownError regardless of message text', async () => {
+    // The decision to throw FetchproxyBridgeDownError is now driven by
+    // @fetchproxy/server's typed `kind` field, not by regex on `error`.
+    // So even if the message text is unrecognizable, a server-classified
+    // content_script_unreachable still routes to the bridge-down error.
     const t = new FetchproxyTransport({ version: '0.0.0' });
     const inner = stubInner();
     inner.fetch.mockResolvedValue({
       ok: false,
       error: 'Receiving end does not exist.',
+      kind: 'content_script_unreachable',
     });
     installInner(t, inner);
     await expect(t.fetch({ path: '/x', method: 'GET' })).rejects.toBeInstanceOf(
@@ -155,6 +161,7 @@ describe('FetchproxyTransport', () => {
     inner.fetch.mockResolvedValue({
       ok: false,
       error: 'no compass.com tab open',
+      kind: 'no_tab',
     });
     installInner(t, inner);
     // Must reject — but NOT as a bridge-down error.
