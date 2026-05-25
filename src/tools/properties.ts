@@ -332,6 +332,14 @@ export function registerPropertyTools(
         idempotentHint: true,
         openWorldHint: true,
       },
+      // Both fields are kept `.optional()` on purpose: a strict
+      // `z.string()` on `url` would make MCP's schema validator reject
+      // sha-only callers with a generic "url Required" message — but
+      // the friendly, educational error from buildPath ("listing_id_sha
+      // alone is not enough — pass the `url` field from a search
+      // result") is more useful to LLMs and humans alike. The runtime
+      // guard in buildPath is the source of truth; the description
+      // says "Required" because functionally it is.
       inputSchema: {
         url: z
           .string()

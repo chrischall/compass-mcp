@@ -72,7 +72,7 @@ export function registerCompareTools(
     {
       title: 'Compare Compass properties side-by-side',
       description:
-        'Fetch 2 or more Compass properties and align their facts side-by-side. Provide an array of targets, each either a `url` or a `listing_id_sha`. Returns a compact summary table aligned by field (address, price, beds/baths, sqft, $/sqft, status, etc.) plus the full per-property record. Per-target errors are captured per-row — one bad target will not fail the whole call. Calls are concurrent.',
+        "Fetch 2 or more Compass properties and align their facts side-by-side. Each target must supply a `url` — the full Compass homedetails URL or path (e.g. from a compass_search_properties result's `url` field). `listing_id_sha` alone is NOT enough; Compass returns 410 Gone for the slug-less URL, surfaced as a per-row error here. Returns a compact summary table aligned by field (address, price, beds/baths, sqft, $/sqft, status, etc.) plus the full per-property record. Per-target errors are captured per-row — one bad target will not fail the whole call. Calls are concurrent.",
       annotations: {
         title: 'Compare Compass properties side-by-side',
         readOnlyHint: true,
@@ -84,8 +84,18 @@ export function registerCompareTools(
           .array(
             z
               .object({
-                url: z.string().optional(),
-                listing_id_sha: z.string().optional(),
+                url: z
+                  .string()
+                  .optional()
+                  .describe(
+                    'Compass homedetails URL or path. Required per target — pass the `url` field from a compass_search_properties result.'
+                  ),
+                listing_id_sha: z
+                  .string()
+                  .optional()
+                  .describe(
+                    'The bare Compass listing identifier. INSUFFICIENT on its own — Compass returns 410 Gone for /homedetails/<sha>_lid/ without the address slug. Pass `url` instead.'
+                  ),
               })
               .passthrough()
           )

@@ -70,7 +70,7 @@ export function registerPhotosTools(
     {
       title: 'Get Compass property photo gallery',
       description:
-        "The full photo gallery for a Compass listing — every image in listing.media[]. Each entry returns the original CDN URL plus a thumbnail URL and pixel dimensions. Provide either `url` (a Compass homedetails URL or path) or `listing_id_sha`. By default only photos (category 0) are returned; set `include_all_categories: true` to also include floorplans and other media. Returns `{ listing_id_sha, count, photos }`. Read-only; safe to call repeatedly.",
+        "The full photo gallery for a Compass listing — every image in listing.media[]. Each entry returns the original CDN URL plus a thumbnail URL and pixel dimensions. Pass `url` — the full Compass homedetails URL or path (e.g. from a compass_search_properties result's `url` field). By default only photos (category 0) are returned; set `include_all_categories: true` to also include floorplans and other media. Returns `{ listing_id_sha, count, photos }`. `listing_id_sha` alone is NOT enough — Compass requires the address slug too and returns 410 Gone for the slug-less URL. Read-only; safe to call repeatedly.",
       annotations: {
         title: 'Get Compass property photo gallery',
         readOnlyHint: true,
@@ -81,8 +81,15 @@ export function registerPhotosTools(
         url: z
           .string()
           .optional()
-          .describe('Compass homedetails URL or path'),
-        listing_id_sha: z.string().optional(),
+          .describe(
+            'Compass homedetails URL or path. Required — pass the `url` field from a compass_search_properties result.'
+          ),
+        listing_id_sha: z
+          .string()
+          .optional()
+          .describe(
+            'The bare Compass listing identifier. INSUFFICIENT on its own — Compass returns 410 Gone for /homedetails/<sha>_lid/ without the address slug. Pass `url` instead.'
+          ),
         include_all_categories: z
           .boolean()
           .optional()
