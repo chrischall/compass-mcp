@@ -212,10 +212,15 @@ export function buildPath(args: {
 }): string {
   if (args.url) return urlToPath(args.url);
   if (args.listing_id_sha) {
+    // No tool-name prefix here: buildPath is shared by every tool
+    // that routes through fetchListingRecord (compass_get_property,
+    // compass_get_property_photos, compass_get_price_history,
+    // compass_compare_properties). Naming a specific tool in the
+    // shared error would mislead callers of the siblings.
     throw new Error(
-      `compass_get_property: listing_id_sha alone is not enough — Compass ` +
-        `requires the full /homedetails/<slug>/<sha>_lid/ path. Pass the ` +
-        `\`url\` field from a compass_search_properties result instead ` +
+      `listing_id_sha alone is not enough — Compass requires the full ` +
+        `/homedetails/<slug>/<sha>_lid/ path. Pass the \`url\` field from ` +
+        `a compass_search_properties result instead ` +
         `(e.g. "https://www.compass.com/homedetails/.../${args.listing_id_sha}_lid/").`
     );
   }
