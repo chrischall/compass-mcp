@@ -18,10 +18,17 @@ afterAll(async () => {
 });
 
 describe('buildPath', () => {
-  it('canonicalizes a listing_id_sha to the homedetails path', () => {
-    expect(buildPath({ listing_id_sha: 'abc123' })).toBe(
-      '/homedetails/abc123_lid/'
+  // Compass routes homedetails by `/homedetails/<slug>/<sha>_lid/` and
+  // returns 410 Gone for the slug-less `/homedetails/<sha>_lid/` form.
+  // The search response always carries a full URL with both segments —
+  // the caller must pass that `url`, not the bare `listing_id_sha`.
+  it('rejects listing_id_sha without a url (compass 410s the slug-less form)', () => {
+    expect(() => buildPath({ listing_id_sha: 'abc123' })).toThrow(
+      /listing_id_sha alone is not enough/i
     );
+    // The error must point the caller at the search result's `url` field
+    // so the next-best-action is obvious to both humans and LLMs.
+    expect(() => buildPath({ listing_id_sha: 'abc123' })).toThrow(/url/);
   });
 
   it('preserves a path-shaped URL', () => {
@@ -176,10 +183,10 @@ describe('compass_get_property tool', () => {
       })
     );
     const r = await harness.callTool('compass_get_property', {
-      listing_id_sha: 'abc',
+      url: '/homedetails/foo/abc_lid/',
     });
     expect(r.isError).toBeFalsy();
-    expect(mockFetchHtml.mock.calls[0][0]).toBe('/homedetails/abc_lid/');
+    expect(mockFetchHtml.mock.calls[0][0]).toBe('/homedetails/foo/abc_lid/');
     const parsed = parseToolResult<{
       address: string;
       price: number;
@@ -190,10 +197,23 @@ describe('compass_get_property tool', () => {
     expect(parsed.localized_status).toBe('Coming Soon');
   });
 
+  it('returns a clear error when called with listing_id_sha alone', async () => {
+    const r = await harness.callTool('compass_get_property', {
+      listing_id_sha: '2079240952806311449',
+    });
+    expect(r.isError).toBeTruthy();
+    const text = (r.content[0] as { text: string }).text;
+    // Must explain the failure and point at the `url` field of search results.
+    expect(text).toMatch(/listing_id_sha alone is not enough/i);
+    expect(text).toMatch(/url/);
+    // Must NOT have fired an HTTP fetch — we short-circuit before the bridge.
+    expect(mockFetchHtml).not.toHaveBeenCalled();
+  });
+
   it('throws when __INITIAL_DATA__ is absent', async () => {
     mockFetchHtml.mockResolvedValueOnce('<html>no init data</html>');
     const r = await harness.callTool('compass_get_property', {
-      listing_id_sha: 'abc',
+      url: '/homedetails/foo/abc_lid/',
     });
     expect(r.isError).toBeTruthy();
     const text = (r.content[0] as { text: string }).text;

@@ -97,7 +97,7 @@ describe('compass_get_price_history tool', () => {
       )
     );
     const r = await harness.callTool('compass_get_price_history', {
-      listing_id_sha: 'abc',
+      url: '/homedetails/foo/abc_lid/',
     });
     const parsed = parseToolResult<{
       events_count: number;
@@ -114,7 +114,7 @@ describe('compass_get_price_history tool', () => {
   it('returns empty arrays when the listing has no history', async () => {
     mockFetchHtml.mockResolvedValueOnce(htmlWith([], []));
     const r = await harness.callTool('compass_get_price_history', {
-      listing_id_sha: 'abc',
+      url: '/homedetails/foo/abc_lid/',
     });
     const parsed = parseToolResult<{
       events_count: number;
