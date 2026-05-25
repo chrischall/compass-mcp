@@ -198,14 +198,32 @@ export function findListing(data: Record<string, unknown>): RawListing | null {
 }
 
 /**
- * Resolve a homedetails path. Accepts a listing-id-SHA or full URL.
+ * Resolve a homedetails path. Requires a full URL — Compass routes
+ * homedetails by `/homedetails/<slug>/<sha>_lid/` and returns 410 Gone
+ * for the slug-less `/homedetails/<sha>_lid/` form, so a bare
+ * `listing_id_sha` is not enough to construct a working request.
+ *
+ * The search response (`compass_search_properties`) always returns a
+ * `url` field with both slug and sha. Pass that.
  */
 export function buildPath(args: {
   listing_id_sha?: string;
   url?: string;
 }): string {
   if (args.url) return urlToPath(args.url);
-  if (args.listing_id_sha) return `/homedetails/${args.listing_id_sha}_lid/`;
+  if (args.listing_id_sha) {
+    // No tool-name prefix here: buildPath is shared by every tool
+    // that routes through fetchListingRecord (compass_get_property,
+    // compass_get_property_photos, compass_get_price_history,
+    // compass_compare_properties). Naming a specific tool in the
+    // shared error would mislead callers of the siblings.
+    throw new Error(
+      `listing_id_sha alone is not enough — Compass requires the full ` +
+        `/homedetails/<slug>/<sha>_lid/ path. Pass the \`url\` field from ` +
+        `a compass_search_properties result instead ` +
+        `(e.g. "https://www.compass.com/homedetails/.../${args.listing_id_sha}_lid/").`
+    );
+  }
   throw new Error(
     'compass property tool: must provide either listing_id_sha or url'
   );
@@ -312,24 +330,34 @@ export function registerPropertyTools(
     {
       title: 'Get Compass property details',
       description:
-        "Fetch a property's full Compass record. Provide either `url` (a full Compass homedetails URL or path) or `listing_id_sha` (the listing identifier). Returns address, neighborhood, beds/baths, sqft, price + price-per-sqft, monthly charges, MLS status, amenities, schools, parcel number, and the canonical Compass URL. Read-only; safe to call repeatedly.",
+        "Fetch a property's full Compass record. Pass `url` — the full Compass homedetails URL or path (e.g. from a compass_search_properties result's `url` field). Returns address, neighborhood, beds/baths, sqft, price + price-per-sqft, monthly charges, MLS status, amenities, schools, parcel number, and the canonical Compass URL. `listing_id_sha` alone is NOT enough — Compass requires the address slug too and returns 410 Gone for the slug-less URL. Read-only; safe to call repeatedly.",
       annotations: {
         title: 'Get Compass property details',
         readOnlyHint: true,
         idempotentHint: true,
         openWorldHint: true,
       },
+      // Both fields are kept `.optional()` on purpose: a strict
+      // `z.string()` on `url` would make MCP's schema validator reject
+      // sha-only callers with a generic "url Required" message — but
+      // the friendly, educational error from buildPath ("listing_id_sha
+      // alone is not enough — pass the `url` field from a search
+      // result") is more useful to LLMs and humans alike. The runtime
+      // guard in buildPath is the source of truth; the description
+      // says "Required" because functionally it is.
       inputSchema: {
         url: z
           .string()
           .optional()
           .describe(
-            'Compass homedetails URL or path (e.g. /homedetails/162-04-12th-Rd-Queens-NY-11357/2109718971930079225_lid/)'
+            'Compass homedetails URL or path (e.g. /homedetails/162-04-12th-Rd-Queens-NY-11357/2109718971930079225_lid/). Required — pass the `url` field from a compass_search_properties result.'
           ),
         listing_id_sha: z
           .string()
           .optional()
-          .describe('The Compass listing identifier (the `_lid` segment of the URL).'),
+          .describe(
+            'The bare Compass listing identifier. INSUFFICIENT on its own — Compass returns 410 Gone for /homedetails/<sha>_lid/ without the address slug. Pass `url` instead.'
+          ),
       },
     },
     async ({ url, listing_id_sha }) => {

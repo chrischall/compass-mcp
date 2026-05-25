@@ -60,9 +60,9 @@ describe('compass_compare_properties tool', () => {
 
     const r = await harness.callTool('compass_compare_properties', {
       targets: [
-        { listing_id_sha: 'a' },
-        { listing_id_sha: 'b' },
-        { listing_id_sha: 'c' },
+        { url: '/homedetails/foo/a_lid/' },
+        { url: '/homedetails/foo/b_lid/' },
+        { url: '/homedetails/foo/c_lid/' },
       ],
     });
     expect(r.isError).toBeFalsy();
@@ -74,6 +74,34 @@ describe('compass_compare_properties tool', () => {
     expect(parsed.results.map((res) => res.property?.price)).toEqual([
       100_000, 200_000, 300_000,
     ]);
+  });
+
+  it('captures sha-only targets as per-row errors with the actionable hint', async () => {
+    // compare.ts must surface the same listing_id_sha-alone error on a
+    // per-row basis (not crash the whole call) so a mixed batch — some
+    // url-shaped, some bare-sha — still returns useful rows for the good
+    // ones and a clear next-action for the bad ones.
+    mockFetchHtml.mockImplementation(async () =>
+      htmlWith({
+        listingIdSHA: 'good',
+        pageLink: '/h/good/',
+        price: { lastKnown: 1_000_000 },
+      })
+    );
+
+    const r = await harness.callTool('compass_compare_properties', {
+      targets: [
+        { url: '/homedetails/foo/good_lid/' },
+        { listing_id_sha: '2079240952806311449' },
+      ],
+    });
+    expect(r.isError).toBeFalsy();
+    const parsed = parseToolResult<{
+      results: Array<{ error?: string; property?: { price?: number } }>;
+    }>(r);
+    expect(parsed.results[0].property?.price).toBe(1_000_000);
+    expect(parsed.results[1].error).toMatch(/listing_id_sha alone is not enough/i);
+    expect(parsed.results[1].error).toMatch(/url/);
   });
 
   it('captures per-target errors without failing the whole call', async () => {
@@ -91,9 +119,9 @@ describe('compass_compare_properties tool', () => {
 
     const r = await harness.callTool('compass_compare_properties', {
       targets: [
-        { listing_id_sha: 'a' },
-        { listing_id_sha: 'b' },
-        { listing_id_sha: 'c' },
+        { url: '/homedetails/foo/a_lid/' },
+        { url: '/homedetails/foo/b_lid/' },
+        { url: '/homedetails/foo/c_lid/' },
       ],
     });
     const parsed = parseToolResult<{

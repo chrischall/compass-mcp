@@ -67,7 +67,7 @@ describe('compass_get_property_photos tool', () => {
       ])
     );
     const r = await harness.callTool('compass_get_property_photos', {
-      listing_id_sha: 'abc',
+      url: '/homedetails/foo/abc_lid/',
     });
     const parsed = parseToolResult<{ count: number; photos: Array<{ url: string }> }>(r);
     expect(parsed.count).toBe(2);
@@ -85,7 +85,7 @@ describe('compass_get_property_photos tool', () => {
       ])
     );
     const r = await harness.callTool('compass_get_property_photos', {
-      listing_id_sha: 'abc',
+      url: '/homedetails/foo/abc_lid/',
       include_all_categories: true,
     });
     const parsed = parseToolResult<{ count: number }>(r);
@@ -95,7 +95,7 @@ describe('compass_get_property_photos tool', () => {
   it('returns count=0 when the listing has no media', async () => {
     mockFetchHtml.mockResolvedValueOnce(htmlWithMedia([]));
     const r = await harness.callTool('compass_get_property_photos', {
-      listing_id_sha: 'abc',
+      url: '/homedetails/foo/abc_lid/',
     });
     const parsed = parseToolResult<{ count: number; photos: unknown[] }>(r);
     expect(parsed.count).toBe(0);
