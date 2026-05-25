@@ -3,7 +3,10 @@
 // What we verify is the path → URL prepending and the discriminated-
 // union mapping (ok:true → triple, ok:false → throw).
 import { describe, it, expect, vi } from 'vitest';
-import { FetchproxyTransport } from '../src/transport-fetchproxy.js';
+import {
+  FetchproxyTimeoutError,
+  FetchproxyTransport,
+} from '../src/transport-fetchproxy.js';
 
 type Inner = {
   listen: ReturnType<typeof vi.fn>;
@@ -92,6 +95,65 @@ describe('FetchproxyTransport', () => {
     await expect(t.fetch({ path: '/x', method: 'GET' })).rejects.toThrow(
       /extension offline/
     );
+  });
+
+  it('throws FetchproxyTimeoutError when the inner fetch never resolves', async () => {
+    const t = new FetchproxyTransport({ version: '0.0.0', fetchTimeoutMs: 25 });
+    const inner = stubInner();
+    // Never resolves — simulates a frozen tab / dropped extension.
+    inner.fetch.mockReturnValue(new Promise(() => {}));
+    installInner(t, inner);
+
+    await expect(
+      t.fetch({ path: '/slow', method: 'GET' })
+    ).rejects.toBeInstanceOf(FetchproxyTimeoutError);
+  });
+
+  it('swallows a late rejection on inner so the post-timeout WS drop is not an unhandled rejection', async () => {
+    const t = new FetchproxyTransport({ version: '0.0.0', fetchTimeoutMs: 25 });
+    const inner = stubInner();
+    // inner.fetch resolves nothing for the race, but then rejects later —
+    // simulates a WebSocket drop happening AFTER the deadline already fired.
+    inner.fetch.mockImplementation(
+      () =>
+        new Promise((_, reject) => {
+          setTimeout(() => reject(new Error('ws closed unexpectedly')), 75);
+        })
+    );
+    installInner(t, inner);
+
+    // The transport.fetch call should reject with the timeout error first.
+    await expect(t.fetch({ path: '/x', method: 'GET' })).rejects.toBeInstanceOf(
+      FetchproxyTimeoutError
+    );
+    // Now let the late rejection settle. The no-op handler we attached
+    // up front should consume it; if not, vitest reports an unhandled
+    // rejection and fails the run.
+    await new Promise((r) => setTimeout(r, 100));
+  });
+
+  it('does not fire the timeout when the inner fetch resolves in time', async () => {
+    const t = new FetchproxyTransport({ version: '0.0.0', fetchTimeoutMs: 1000 });
+    const inner = stubInner();
+    inner.fetch.mockImplementation(
+      () =>
+        new Promise((resolve) =>
+          setTimeout(
+            () =>
+              resolve({
+                ok: true,
+                status: 200,
+                body: 'ok',
+                url: 'https://www.compass.com/x',
+              }),
+            10
+          )
+        )
+    );
+    installInner(t, inner);
+
+    const result = await t.fetch({ path: '/x', method: 'GET' });
+    expect(result.status).toBe(200);
   });
 
   it('start/close delegate to the inner FetchproxyServer', async () => {
