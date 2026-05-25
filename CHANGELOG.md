@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.5.0](https://github.com/chrischall/compass-mcp/compare/v0.4.3...v0.5.0) (2026-05-25)
+
+
+### Features
+
+* **diagnostics:** bridge role + richer timeout + compass_healthcheck tool ([#9](https://github.com/chrischall/compass-mcp/issues/9)) ([42b4b5f](https://github.com/chrischall/compass-mcp/commit/42b4b5f4a0aff289269cf17df256025797151db7))
+
 ## [0.4.3](https://github.com/chrischall/compass-mcp/compare/v0.4.2...v0.4.3) (2026-05-25)
 
 
