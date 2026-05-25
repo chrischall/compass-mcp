@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.6.0](https://github.com/chrischall/compass-mcp/compare/v0.5.0...v0.6.0) (2026-05-25)
+
+
+### Features
+
+* **transport:** typed FetchproxyBridgeDownError + bridge freshness diagnostics ([#14](https://github.com/chrischall/compass-mcp/issues/14)) ([793c41c](https://github.com/chrischall/compass-mcp/commit/793c41ce70bd50ad2b61bb655c240bf9c7f86567))
+
+
+### Bug Fixes
+
+* **properties:** reject listing_id_sha-only calls with an actionable error ([#13](https://github.com/chrischall/compass-mcp/issues/13)) ([9dfc01a](https://github.com/chrischall/compass-mcp/commit/9dfc01a12f043c3bea2f019bc0f2d3f2e0f0c166))
+
 ## [0.5.0](https://github.com/chrischall/compass-mcp/compare/v0.4.3...v0.5.0) (2026-05-25)
 
 
