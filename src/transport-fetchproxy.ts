@@ -47,28 +47,6 @@ function log(...args: unknown[]): void {
 }
 
 /**
- * Patterns that indicate the upstream fetchproxy browser extension's
- * service worker has been evicted (or never bound). Chrome's
- * `runtime.sendMessage` returns these specific strings when the
- * destination SW is gone. We surface them as a typed error rather
- * than a generic transport message so callers + the healthcheck tool
- * can hint the user toward the right fix (reload the extension page
- * or invoke any tool to wake the SW).
- *
- * Match logic is intentionally narrow — we only catch the two
- * Chrome-canonical phrasings; everything else stays a generic
- * transport error so we don't accidentally swallow new failure modes.
- */
-const BRIDGE_DOWN_PATTERNS: RegExp[] = [
-  /Could not establish connection/i,
-  /Receiving end does not exist/i,
-];
-
-function isBridgeDownError(message: string): boolean {
-  return BRIDGE_DOWN_PATTERNS.some((re) => re.test(message));
-}
-
-/**
  * Thrown when the upstream extension's service worker is unreachable.
  * Distinct from `FetchproxyTimeoutError` (no response within timeout)
  * and from a generic transport `Error` (any other ok:false reason).
@@ -284,7 +262,14 @@ export class FetchproxyTransport implements CompassTransport {
     if (!result.ok) {
       log('fetch:bridge-error', { url, elapsed, error: result.error });
       this.recordFailure(result.error);
-      if (isBridgeDownError(result.error)) {
+      // @fetchproxy/server 0.5.0+ classifies the extension-side error
+      // into a discriminated `kind` (`'content_script_unreachable'`,
+      // `'no_tab'`, `'tab_fetch_failed'`, …). We surface the SW-
+      // unreachable case as a typed FetchproxyBridgeDownError so
+      // callers + compass_healthcheck can give actionable hints.
+      // Earlier compass-mcp versions did string-regex matching on the
+      // raw error; the kind field is the source of truth as of 0.5.0.
+      if (result.kind === 'content_script_unreachable') {
         throw new FetchproxyBridgeDownError({
           url,
           elapsedMs: elapsed,
