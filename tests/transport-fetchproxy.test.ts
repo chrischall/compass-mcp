@@ -4,6 +4,7 @@
 // union mapping (ok:true → triple, ok:false → throw).
 import { describe, it, expect, vi } from 'vitest';
 import {
+  FetchproxyBridgeDownError,
   FetchproxyTimeoutError,
   FetchproxyTransport,
 } from '../src/transport-fetchproxy.js';
@@ -97,6 +98,139 @@ describe('FetchproxyTransport', () => {
     await expect(t.fetch({ path: '/x', method: 'GET' })).rejects.toThrow(
       /extension offline/
     );
+  });
+
+  // The "Could not establish connection. Receiving end does not exist."
+  // string comes from Chrome's runtime.sendMessage when the extension's
+  // service worker has been evicted (the default eviction window is ~30s
+  // idle). Map that one specific failure mode to a typed error with the
+  // same diagnostic shape we already give for timeouts — so callers can
+  // tell "SW dead" apart from "extension offline" apart from "Compass
+  // returned 410" without grep'ing strings.
+  it('throws FetchproxyBridgeDownError on SW-eviction error pattern', async () => {
+    const t = new FetchproxyTransport({
+      version: '0.0.0',
+      port: 37200,
+    });
+    const inner = stubInner('peer');
+    inner.fetch.mockResolvedValue({
+      ok: false,
+      error:
+        'tab fetch failed: Error: Could not establish connection. Receiving end does not exist.',
+    });
+    installInner(t, inner);
+
+    try {
+      await t.fetch({ path: '/x', method: 'GET' });
+      expect.fail('expected bridge-down error');
+    } catch (e) {
+      expect(e).toBeInstanceOf(FetchproxyBridgeDownError);
+      const err = e as FetchproxyBridgeDownError;
+      expect(err.role).toBe('peer');
+      expect(err.port).toBe(37200);
+      expect(err.url).toBe('https://www.compass.com/x');
+      expect(err.originalError).toMatch(/Could not establish connection/);
+      // Hint must mention service worker so the next debugger knows
+      // where to look — the upstream extension, not this repo.
+      expect(err.hint).toMatch(/service worker/i);
+    }
+  });
+
+  it('matches the "Receiving end does not exist" half of the SW-eviction string', async () => {
+    const t = new FetchproxyTransport({ version: '0.0.0' });
+    const inner = stubInner();
+    inner.fetch.mockResolvedValue({
+      ok: false,
+      error: 'Receiving end does not exist.',
+    });
+    installInner(t, inner);
+    await expect(t.fetch({ path: '/x', method: 'GET' })).rejects.toBeInstanceOf(
+      FetchproxyBridgeDownError
+    );
+  });
+
+  it('still throws a generic Error (not FetchproxyBridgeDownError) for unrelated ok:false reasons', async () => {
+    const t = new FetchproxyTransport({ version: '0.0.0' });
+    const inner = stubInner();
+    inner.fetch.mockResolvedValue({
+      ok: false,
+      error: 'no compass.com tab open',
+    });
+    installInner(t, inner);
+    // Must reject — but NOT as a bridge-down error.
+    try {
+      await t.fetch({ path: '/x', method: 'GET' });
+      expect.fail('expected reject');
+    } catch (e) {
+      expect(e).not.toBeInstanceOf(FetchproxyBridgeDownError);
+      expect((e as Error).message).toMatch(/no compass\.com tab open/);
+    }
+  });
+
+  // Freshness counters give the operator visibility into "is this
+  // bridge healthy or limping along." A long-idle bridge with no recent
+  // success is hard to distinguish from a brand-new one — these counters
+  // give compass_healthcheck something concrete to surface.
+  it('updates lastSuccessAt + resets consecutiveFailures on success', async () => {
+    const t = new FetchproxyTransport({ version: '0.0.0' });
+    const inner = stubInner();
+    inner.fetch.mockResolvedValue({
+      ok: true,
+      status: 200,
+      body: 'ok',
+      url: 'https://www.compass.com/x',
+    });
+    installInner(t, inner);
+
+    const before = t.status();
+    expect(before.lastSuccessAt).toBeNull();
+    expect(before.consecutiveFailures).toBe(0);
+
+    const t0 = Date.now();
+    await t.fetch({ path: '/x', method: 'GET' });
+    const after = t.status();
+    expect(after.lastSuccessAt).not.toBeNull();
+    expect(after.lastSuccessAt!).toBeGreaterThanOrEqual(t0);
+    expect(after.consecutiveFailures).toBe(0);
+  });
+
+  it('updates lastFailureAt + increments consecutiveFailures on failure', async () => {
+    const t = new FetchproxyTransport({ version: '0.0.0' });
+    const inner = stubInner();
+    inner.fetch.mockResolvedValue({
+      ok: false,
+      error: 'something broke',
+    });
+    installInner(t, inner);
+
+    await expect(t.fetch({ path: '/a', method: 'GET' })).rejects.toThrow();
+    await expect(t.fetch({ path: '/b', method: 'GET' })).rejects.toThrow();
+    const s = t.status();
+    expect(s.lastFailureAt).not.toBeNull();
+    expect(s.consecutiveFailures).toBe(2);
+    expect(s.lastFailureReason).toMatch(/something broke/);
+  });
+
+  it('resets consecutiveFailures back to 0 after a successful fetch', async () => {
+    const t = new FetchproxyTransport({ version: '0.0.0' });
+    const inner = stubInner();
+    // Two failures then a success.
+    inner.fetch
+      .mockResolvedValueOnce({ ok: false, error: 'transient' })
+      .mockResolvedValueOnce({ ok: false, error: 'transient' })
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        body: 'ok',
+        url: 'https://www.compass.com/x',
+      });
+    installInner(t, inner);
+
+    await expect(t.fetch({ path: '/x', method: 'GET' })).rejects.toThrow();
+    await expect(t.fetch({ path: '/x', method: 'GET' })).rejects.toThrow();
+    expect(t.status().consecutiveFailures).toBe(2);
+    await t.fetch({ path: '/x', method: 'GET' });
+    expect(t.status().consecutiveFailures).toBe(0);
   });
 
   it('throws FetchproxyTimeoutError with role + port + elapsed diagnostics', async () => {
@@ -207,7 +341,7 @@ describe('FetchproxyTransport', () => {
     expect(inner.close).toHaveBeenCalledTimes(1);
   });
 
-  it('status() returns role + port + version + timeout', () => {
+  it('status() returns role + port + version + timeout + freshness fields', () => {
     const t = new FetchproxyTransport({
       version: '1.2.3',
       port: 37200,
@@ -220,6 +354,10 @@ describe('FetchproxyTransport', () => {
       port: 37200,
       serverVersion: '1.2.3',
       fetchTimeoutMs: 5000,
+      lastSuccessAt: null,
+      lastFailureAt: null,
+      lastFailureReason: null,
+      consecutiveFailures: 0,
     });
   });
 

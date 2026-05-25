@@ -1,27 +1,32 @@
 import { describe, it, expect, vi, afterAll } from 'vitest';
 import type { CompassClient } from '../../src/client.js';
 import { registerHealthcheckTools } from '../../src/tools/healthcheck.js';
-import { FetchproxyTimeoutError } from '../../src/transport-fetchproxy.js';
+import {
+  FetchproxyBridgeDownError,
+  FetchproxyTimeoutError,
+} from '../../src/transport-fetchproxy.js';
+import type { BridgeStatus } from '../../src/transport.js';
 import { createTestHarness, parseToolResult } from '../helpers.js';
 
+const DEFAULT_STATUS: BridgeStatus = {
+  role: 'host',
+  port: 37149,
+  serverVersion: '0.0.0',
+  fetchTimeoutMs: 30_000,
+  lastSuccessAt: null,
+  lastFailureAt: null,
+  lastFailureReason: null,
+  consecutiveFailures: 0,
+};
+
 function stubClient(args: {
-  status?: {
-    role: 'host' | 'peer' | null;
-    port: number;
-    serverVersion: string;
-    fetchTimeoutMs: number;
-  };
+  status?: Partial<BridgeStatus>;
   fetchHtml?: ReturnType<typeof vi.fn>;
 }): CompassClient {
   return {
-    bridgeStatus: vi.fn().mockReturnValue(
-      args.status ?? {
-        role: 'host',
-        port: 37149,
-        serverVersion: '0.0.0',
-        fetchTimeoutMs: 30_000,
-      }
-    ),
+    bridgeStatus: vi
+      .fn()
+      .mockReturnValue({ ...DEFAULT_STATUS, ...(args.status ?? {}) }),
     fetchHtml: args.fetchHtml ?? vi.fn().mockResolvedValue('User-agent: *'),
   } as unknown as CompassClient;
 }
@@ -140,6 +145,65 @@ describe('compass_healthcheck tool', () => {
     expect(parsed.ok).toBe(false);
     expect(parsed.error.kind).toBe('transport');
     expect(parsed.hint).toMatch(/no compass\.com tab is open/i);
+  });
+
+  it('classifies a FetchproxyBridgeDownError as kind=bridge_down with SW-eviction hint', async () => {
+    const client = stubClient({
+      status: { role: 'peer', port: 37149, serverVersion: '0.5.0' },
+      fetchHtml: vi.fn().mockRejectedValue(
+        new FetchproxyBridgeDownError({
+          url: 'https://www.compass.com/robots.txt',
+          elapsedMs: 14,
+          role: 'peer',
+          port: 37149,
+          originalError:
+            'tab fetch failed: Error: Could not establish connection. Receiving end does not exist.',
+        })
+      ),
+    });
+    harness = await createTestHarness((server) =>
+      registerHealthcheckTools(server, client)
+    );
+    const r = await harness.callTool('compass_healthcheck', {});
+    const parsed = parseToolResult<{
+      ok: boolean;
+      error: { kind: string; message: string };
+      hint: string;
+    }>(r);
+    expect(parsed.ok).toBe(false);
+    expect(parsed.error.kind).toBe('bridge_down');
+    // Hint must point the operator at the right place: the extension's
+    // service worker, not the MCP process and not Compass itself.
+    expect(parsed.hint).toMatch(/service worker/i);
+  });
+
+  it('surfaces freshness counters (last_success_at, last_failure_at, consecutive_failures) on the bridge block', async () => {
+    const SUCCESS_AT = Date.parse('2026-05-25T03:39:46Z');
+    const FAILURE_AT = Date.parse('2026-05-25T03:40:00Z');
+    const client = stubClient({
+      status: {
+        lastSuccessAt: SUCCESS_AT,
+        lastFailureAt: FAILURE_AT,
+        lastFailureReason: 'Could not establish connection.',
+        consecutiveFailures: 3,
+      },
+    });
+    harness = await createTestHarness((server) =>
+      registerHealthcheckTools(server, client)
+    );
+    const r = await harness.callTool('compass_healthcheck', {});
+    const parsed = parseToolResult<{
+      bridge: {
+        last_success_at: number | null;
+        last_failure_at: number | null;
+        last_failure_reason: string | null;
+        consecutive_failures: number;
+      };
+    }>(r);
+    expect(parsed.bridge.last_success_at).toBe(SUCCESS_AT);
+    expect(parsed.bridge.last_failure_at).toBe(FAILURE_AT);
+    expect(parsed.bridge.last_failure_reason).toMatch(/Could not establish/);
+    expect(parsed.bridge.consecutive_failures).toBe(3);
   });
 
   it('classifies an unrelated error as kind=other', async () => {

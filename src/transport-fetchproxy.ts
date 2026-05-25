@@ -47,6 +47,71 @@ function log(...args: unknown[]): void {
 }
 
 /**
+ * Patterns that indicate the upstream fetchproxy browser extension's
+ * service worker has been evicted (or never bound). Chrome's
+ * `runtime.sendMessage` returns these specific strings when the
+ * destination SW is gone. We surface them as a typed error rather
+ * than a generic transport message so callers + the healthcheck tool
+ * can hint the user toward the right fix (reload the extension page
+ * or invoke any tool to wake the SW).
+ *
+ * Match logic is intentionally narrow — we only catch the two
+ * Chrome-canonical phrasings; everything else stays a generic
+ * transport error so we don't accidentally swallow new failure modes.
+ */
+const BRIDGE_DOWN_PATTERNS: RegExp[] = [
+  /Could not establish connection/i,
+  /Receiving end does not exist/i,
+];
+
+function isBridgeDownError(message: string): boolean {
+  return BRIDGE_DOWN_PATTERNS.some((re) => re.test(message));
+}
+
+/**
+ * Thrown when the upstream extension's service worker is unreachable.
+ * Distinct from `FetchproxyTimeoutError` (no response within timeout)
+ * and from a generic transport `Error` (any other ok:false reason).
+ * Carries the same role/port/elapsed diagnostic surface so callers
+ * can show users one consistent failure shape.
+ */
+export class FetchproxyBridgeDownError extends Error {
+  readonly url: string;
+  readonly elapsedMs: number;
+  readonly role: 'host' | 'peer' | null;
+  readonly port: number;
+  readonly originalError: string;
+  readonly hint: string;
+
+  constructor(args: {
+    url: string;
+    elapsedMs: number;
+    role: 'host' | 'peer' | null;
+    port: number;
+    originalError: string;
+  }) {
+    const hint =
+      `the fetchproxy browser extension's service worker is not ` +
+      `responding ("${args.originalError}"). Chrome evicts extension ` +
+      `service workers after ~30s idle by default. Wake it by clicking ` +
+      `the fetchproxy extension icon (or by opening any compass.com tab ` +
+      `and reloading), then retry. If it keeps happening, the extension ` +
+      `may need to be reloaded from chrome://extensions.`;
+    super(
+      `fetchproxy bridge down: ${args.url} after ${args.elapsedMs}ms ` +
+        `(role=${args.role ?? 'null'} port=${args.port}). ${hint}`
+    );
+    this.name = 'FetchproxyBridgeDownError';
+    this.url = args.url;
+    this.elapsedMs = args.elapsedMs;
+    this.role = args.role;
+    this.port = args.port;
+    this.originalError = args.originalError;
+    this.hint = hint;
+  }
+}
+
+/**
  * Thrown when a request didn't get a response within `fetchTimeoutMs`.
  * Carries enough diagnostic context to distinguish:
  *   - bridge never came up (`role` = null, time elapsed ≈ timeout)
@@ -102,6 +167,13 @@ export class FetchproxyTransport implements CompassTransport {
   private readonly fetchTimeoutMs: number;
   private readonly port: number;
   private readonly serverVersion: string;
+  // Freshness counters surfaced through `status()` so `compass_healthcheck`
+  // can answer "is this bridge healthy or limping along?". Reset by a
+  // success, not by close()/start() — we want a process-wide history.
+  private lastSuccessAt: number | null = null;
+  private lastFailureAt: number | null = null;
+  private lastFailureReason: string | null = null;
+  private consecutiveFailures = 0;
 
   constructor(opts: FetchproxyTransportOptions) {
     this.port = opts.port ?? DEFAULT_PORT;
@@ -134,7 +206,8 @@ export class FetchproxyTransport implements CompassTransport {
 
   /**
    * Diagnostic snapshot of the bridge. Safe to call before `start()` —
-   * `role` will be null until `listen()` resolves.
+   * `role` will be null until `listen()` resolves; freshness counters
+   * are null/0 until the first request fires.
    */
   status(): BridgeStatus {
     return {
@@ -142,7 +215,22 @@ export class FetchproxyTransport implements CompassTransport {
       port: this.port,
       serverVersion: this.serverVersion,
       fetchTimeoutMs: this.fetchTimeoutMs,
+      lastSuccessAt: this.lastSuccessAt,
+      lastFailureAt: this.lastFailureAt,
+      lastFailureReason: this.lastFailureReason,
+      consecutiveFailures: this.consecutiveFailures,
     };
+  }
+
+  private recordSuccess(): void {
+    this.lastSuccessAt = Date.now();
+    this.consecutiveFailures = 0;
+  }
+
+  private recordFailure(reason: string): void {
+    this.lastFailureAt = Date.now();
+    this.lastFailureReason = reason;
+    this.consecutiveFailures += 1;
   }
 
   async fetch(init: FetchInit): Promise<FetchResult> {
@@ -177,15 +265,15 @@ export class FetchproxyTransport implements CompassTransport {
           timer = setTimeout(() => {
             const elapsed = Date.now() - start;
             log('fetch:timeout', { url, elapsed, role: this.inner.role });
-            reject(
-              new FetchproxyTimeoutError({
-                url,
-                timeoutMs: this.fetchTimeoutMs,
-                elapsedMs: elapsed,
-                role: this.inner.role,
-                port: this.port,
-              })
-            );
+            const err = new FetchproxyTimeoutError({
+              url,
+              timeoutMs: this.fetchTimeoutMs,
+              elapsedMs: elapsed,
+              role: this.inner.role,
+              port: this.port,
+            });
+            this.recordFailure(`timeout: ${url}`);
+            reject(err);
           }, this.fetchTimeoutMs);
         }),
       ]);
@@ -195,6 +283,16 @@ export class FetchproxyTransport implements CompassTransport {
     const elapsed = Date.now() - start;
     if (!result.ok) {
       log('fetch:bridge-error', { url, elapsed, error: result.error });
+      this.recordFailure(result.error);
+      if (isBridgeDownError(result.error)) {
+        throw new FetchproxyBridgeDownError({
+          url,
+          elapsedMs: elapsed,
+          role: this.inner.role,
+          port: this.port,
+          originalError: result.error,
+        });
+      }
       throw new Error(
         `fetchproxy transport error after ${elapsed}ms (role=${this.inner.role ?? 'null'}): ${result.error}`
       );
@@ -205,6 +303,7 @@ export class FetchproxyTransport implements CompassTransport {
       status: result.status,
       bodyLen: result.body.length,
     });
+    this.recordSuccess();
     return { status: result.status, body: result.body, url: result.url };
   }
 }

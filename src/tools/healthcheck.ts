@@ -1,7 +1,10 @@
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import type { CompassClient } from '../client.js';
 import { textResult } from '../mcp.js';
-import { FetchproxyTimeoutError } from '../transport-fetchproxy.js';
+import {
+  FetchproxyBridgeDownError,
+  FetchproxyTimeoutError,
+} from '../transport-fetchproxy.js';
 
 /**
  * Round-trip a no-op request through the full bridge so the user can
@@ -29,6 +32,14 @@ interface HealthcheckResult {
     port: number;
     server_version: string;
     fetch_timeout_ms: number;
+    /** Unix-ms timestamp of the last successful round-trip. `null` until the first success. */
+    last_success_at: number | null;
+    /** Unix-ms timestamp of the last failed round-trip. `null` until the first failure. */
+    last_failure_at: number | null;
+    /** Most recent failure reason. `null` until the first failure. */
+    last_failure_reason: string | null;
+    /** Count of failures since the last success (or process start, if none). */
+    consecutive_failures: number;
   };
   probe: {
     url: string;
@@ -37,7 +48,7 @@ interface HealthcheckResult {
     body_length?: number;
   };
   error?: {
-    kind: 'timeout' | 'transport' | 'other';
+    kind: 'timeout' | 'transport' | 'bridge_down' | 'other';
     message: string;
     /** When the timeout fired, the role at the moment of failure. */
     role_at_failure?: 'host' | 'peer' | null;
@@ -51,13 +62,16 @@ const PROBE_PATH = '/robots.txt';
 function hintFor(args: {
   ok: boolean;
   role: 'host' | 'peer' | null;
-  errorKind?: 'timeout' | 'transport' | 'other';
+  errorKind?: 'timeout' | 'transport' | 'bridge_down' | 'other';
 }): string {
   if (args.ok) {
     return `Bridge round-tripped /robots.txt successfully. If real tools still hang, the problem is downstream of fetchproxy (Compass redirecting on login, behavioral challenge, etc.) — not the bridge.`;
   }
   if (args.role === null) {
     return `The bridge never bound a role. listen() may have failed silently on startup. Check stderr from compass-mcp for an error during start, and confirm port ${37149} isn't blocked.`;
+  }
+  if (args.errorKind === 'bridge_down') {
+    return `The fetchproxy browser extension's service worker is not responding. Chrome evicts extension service workers after ~30s idle by default — this looks like that case. Wake it by clicking the fetchproxy extension icon (or opening any compass.com tab and reloading), then retry. If it keeps happening, reload the extension from chrome://extensions.`;
   }
   if (args.errorKind === 'timeout') {
     return `Bridge is alive (role=${args.role}), but the request didn't get a response in time. Either (a) the fetchproxy browser extension isn't connected to this MCP yet — open the extension popup and check for a green dot next to "compass-mcp", or (b) the signed-in compass.com tab is sleeping / closed. Open compass.com in your browser, then retry.`;
@@ -112,6 +126,12 @@ export function registerHealthcheckTools(
             message: e.message,
             role_at_failure: e.role,
           };
+        } else if (e instanceof FetchproxyBridgeDownError) {
+          error = {
+            kind: 'bridge_down',
+            message: e.message,
+            role_at_failure: e.role,
+          };
         } else if (e instanceof Error && /fetchproxy transport error/.test(e.message)) {
           error = { kind: 'transport', message: e.message };
         } else {
@@ -122,19 +142,27 @@ export function registerHealthcheckTools(
         }
         probe = { ...probe, elapsed_ms: elapsedMs };
       }
+      // Re-read after the probe — recordSuccess/recordFailure on the
+      // transport just updated the counters, so this snapshot reflects
+      // the freshest state including this very call.
+      const postProbeBridge = client.bridgeStatus();
       const result: HealthcheckResult = {
         ok,
         bridge: {
-          role: bridge.role,
-          port: bridge.port,
-          server_version: bridge.serverVersion,
-          fetch_timeout_ms: bridge.fetchTimeoutMs,
+          role: postProbeBridge.role,
+          port: postProbeBridge.port,
+          server_version: postProbeBridge.serverVersion,
+          fetch_timeout_ms: postProbeBridge.fetchTimeoutMs,
+          last_success_at: postProbeBridge.lastSuccessAt,
+          last_failure_at: postProbeBridge.lastFailureAt,
+          last_failure_reason: postProbeBridge.lastFailureReason,
+          consecutive_failures: postProbeBridge.consecutiveFailures,
         },
         probe,
         ...(error ? { error } : {}),
         hint: hintFor({
           ok,
-          role: bridge.role,
+          role: postProbeBridge.role,
           errorKind: error?.kind,
         }),
       };
