@@ -38,6 +38,14 @@ export interface BridgeStatus {
   serverVersion: string;
   /** Default per-request timeout in ms. */
   fetchTimeoutMs: number;
+  /** Unix-ms timestamp of the last successful round-trip. `null` until the first success. */
+  lastSuccessAt: number | null;
+  /** Unix-ms timestamp of the last failed round-trip. `null` until the first failure. */
+  lastFailureAt: number | null;
+  /** Short message describing the most recent failure. `null` until the first failure. */
+  lastFailureReason: string | null;
+  /** Number of failures since the last success (or since process start, if none). */
+  consecutiveFailures: number;
 }
 
 export interface CompassTransport {
