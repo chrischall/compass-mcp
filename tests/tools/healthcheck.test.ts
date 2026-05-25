@@ -95,6 +95,38 @@ describe('compass_healthcheck tool', () => {
     expect(parsed.hint).toMatch(/extension popup/i);
   });
 
+  it('bridge_down hint wins over the generic role=null hint when both apply', async () => {
+    // Regression: the previous hintFor ordering checked role===null
+    // first, so a FetchproxyBridgeDownError thrown while role happened
+    // to be null (technically possible during startup) showed the
+    // wrong message ("bridge never bound a role") instead of the
+    // SW-eviction guidance.
+    const client = stubClient({
+      status: {
+        role: null,
+        port: 37149,
+        serverVersion: '1.0.0',
+      },
+      fetchHtml: vi.fn().mockRejectedValue(
+        new FetchproxyBridgeDownError({
+          url: 'https://www.compass.com/robots.txt',
+          elapsedMs: 11,
+          role: null,
+          port: 37149,
+          originalError: 'Could not establish connection.',
+        })
+      ),
+    });
+    harness = await createTestHarness((server) =>
+      registerHealthcheckTools(server, client)
+    );
+    const r = await harness.callTool('compass_healthcheck', {});
+    const parsed = parseToolResult<{ error: { kind: string }; hint: string }>(r);
+    expect(parsed.error.kind).toBe('bridge_down');
+    expect(parsed.hint).toMatch(/service worker/i);
+    expect(parsed.hint).not.toMatch(/never bound a role/);
+  });
+
   it('hint when role is null points at startup failure, not extension issue', async () => {
     const client = stubClient({
       status: {

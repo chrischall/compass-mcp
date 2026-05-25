@@ -67,11 +67,16 @@ function hintFor(args: {
   if (args.ok) {
     return `Bridge round-tripped /robots.txt successfully. If real tools still hang, the problem is downstream of fetchproxy (Compass redirecting on login, behavioral challenge, etc.) — not the bridge.`;
   }
-  if (args.role === null) {
-    return `The bridge never bound a role. listen() may have failed silently on startup. Check stderr from compass-mcp for an error during start, and confirm port ${37149} isn't blocked.`;
-  }
+  // Order: specific error kinds first, then the generic role-based hint.
+  // A FetchproxyBridgeDownError can fire with role=null (the bridge can
+  // hand back the SW-eviction error before listen() has resolved); the
+  // more-specific bridge_down hint must win over the generic
+  // "never bound a role" message in that case.
   if (args.errorKind === 'bridge_down') {
     return `The fetchproxy browser extension's service worker is not responding. Chrome evicts extension service workers after ~30s idle by default — this looks like that case. Wake it by clicking the fetchproxy extension icon (or opening any compass.com tab and reloading), then retry. If it keeps happening, reload the extension from chrome://extensions.`;
+  }
+  if (args.role === null) {
+    return `The bridge never bound a role. listen() may have failed silently on startup. Check stderr from compass-mcp for an error during start, and confirm port ${37149} isn't blocked.`;
   }
   if (args.errorKind === 'timeout') {
     return `Bridge is alive (role=${args.role}), but the request didn't get a response in time. Either (a) the fetchproxy browser extension isn't connected to this MCP yet — open the extension popup and check for a green dot next to "compass-mcp", or (b) the signed-in compass.com tab is sleeping / closed. Open compass.com in your browser, then retry.`;
@@ -101,7 +106,9 @@ export function registerHealthcheckTools(
       inputSchema: {},
     },
     async () => {
-      const bridge = client.bridgeStatus();
+      // We read bridgeStatus() once at the bottom (after the probe) so
+      // the freshness counters in the response include this very call.
+      // Don't read it up front — that snapshot would be stale.
       const start = Date.now();
       let probe: HealthcheckResult['probe'] = {
         url: `https://www.compass.com${PROBE_PATH}`,

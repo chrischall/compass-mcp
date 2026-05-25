@@ -264,6 +264,14 @@ describe('FetchproxyTransport', () => {
       // "bridge alive, request stalled" (role non-null).
       expect(err.hint).toMatch(/bridge is role=peer on port 37200/);
     }
+    // The timeout path runs `recordFailure` inside the setTimeout
+    // callback. Assert that updates the freshness counters too, so a
+    // long-idle bridge that hits its first timeout is observable via
+    // compass_healthcheck the same way an ok:false failure is.
+    const s = t.status();
+    expect(s.lastFailureAt).not.toBeNull();
+    expect(s.lastFailureReason).toMatch(/^timeout: /);
+    expect(s.consecutiveFailures).toBe(1);
   });
 
   it('hint changes when role is still null (bridge never bound on startup)', async () => {
