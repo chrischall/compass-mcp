@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.7.0](https://github.com/chrischall/compass-mcp/compare/v0.6.2...v0.7.0) (2026-05-26)
+
+
+### Features
+
+* **by-address:** add compass_get_by_address resolver ([#31](https://github.com/chrischall/compass-mcp/issues/31)) ([35a16e3](https://github.com/chrischall/compass-mcp/commit/35a16e3d45a3aa3f11c4a495b6bf63c103734c60)), closes [#27](https://github.com/chrischall/compass-mcp/issues/27)
+* **properties:** resolve listing_id_sha internally via site search ([#30](https://github.com/chrischall/compass-mcp/issues/30)) ([0c41dba](https://github.com/chrischall/compass-mcp/commit/0c41dbaafe4c8ae6559d53121972fefd5e2d5116))
+* **search:** add offset/limit pagination across Compass page batches ([#29](https://github.com/chrischall/compass-mcp/issues/29)) ([84bf1e7](https://github.com/chrischall/compass-mcp/commit/84bf1e79a35a09fb9736126efa00a2fdd19e2379))
+
 ## [0.6.2](https://github.com/chrischall/compass-mcp/compare/v0.6.1...v0.6.2) (2026-05-26)
 
 
