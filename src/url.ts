@@ -25,6 +25,32 @@ export function urlToPath(input: string): string {
 }
 
 /**
+ * Extract the opaque `pid` from a Compass `_pid/` URL.
+ *
+ * Compass exposes two URL forms for a listing:
+ *
+ *   - `/<prefix>/<slug>/<pid>_pid/`  — opaque short ID, **stable** across
+ *     re-listings. Preferred for trackers, bookmarks, sheet rows.
+ *   - `/homedetails/<slug>/<sha>_lid/` — content-addressed sha,
+ *     **changes** when a property is delisted and relisted. Useful
+ *     for fetching the current listing record, but does not survive
+ *     relistings.
+ *
+ * The `listing.navigationPageLink` field carries the `_pid/` form when
+ * one is available; pulling the `pid` out of it lets the agent
+ * reconstruct the stable URL on demand.
+ *
+ * Returns undefined for any non-`_pid/` shape (including `_lid/`).
+ */
+export function extractPidFromUrl(
+  link: string | undefined
+): string | undefined {
+  if (!link) return undefined;
+  const m = /\/([A-Za-z0-9]+)_pid\/?$/.exec(link);
+  return m ? m[1] : undefined;
+}
+
+/**
  * Slugify a free-text location into Compass's search URL format.
  *
  *   "Brooklyn, NY"  → "brooklyn-ny"

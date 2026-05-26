@@ -86,6 +86,7 @@ describe('formatHome', () => {
     });
     expect(out).toEqual({
       listing_id_sha: '2109718971930079225',
+      pid: '203T5X',
       url: 'https://www.compass.com/homedetails/foo/2109718971930079225_lid/',
       property_url: 'https://www.compass.com/homedetails/foo/203T5X_pid/',
       address: '162-04 12th Road',
@@ -120,6 +121,30 @@ describe('formatHome', () => {
     });
     expect(out?.beds).toBe(2);
     expect(out?.baths).toBe(1.5);
+  });
+
+  it('surfaces pid alongside listing_id_sha when navigationPageLink is a _pid/ form', () => {
+    // Issue #27: `_pid/` URLs survive re-listings, `_lid/` URLs do not.
+    // Callers tracking a property across listing cycles want the pid.
+    const out = formatHome({
+      listing: {
+        listingIdSHA: '2109718971930079225',
+        pageLink: '/homedetails/foo/2109718971930079225_lid/',
+        navigationPageLink: '/homedetails/foo/203T5X_pid/',
+      },
+    });
+    expect(out?.pid).toBe('203T5X');
+    expect(out?.listing_id_sha).toBe('2109718971930079225');
+  });
+
+  it('omits pid when no navigationPageLink is present', () => {
+    const out = formatHome({
+      listing: {
+        listingIdSHA: '1',
+        pageLink: '/homedetails/foo/1_lid/',
+      },
+    });
+    expect(out?.pid).toBeUndefined();
   });
 });
 
