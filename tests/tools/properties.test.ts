@@ -5,6 +5,7 @@ import {
   findListing,
   format,
   registerPropertyTools,
+  resolvePathFromSha,
 } from '../../src/tools/properties.js';
 import { createTestHarness, parseToolResult } from '../helpers.js';
 
@@ -18,19 +19,6 @@ afterAll(async () => {
 });
 
 describe('buildPath', () => {
-  // Compass routes homedetails by `/homedetails/<slug>/<sha>_lid/` and
-  // returns 410 Gone for the slug-less `/homedetails/<sha>_lid/` form.
-  // The search response always carries a full URL with both segments —
-  // the caller must pass that `url`, not the bare `listing_id_sha`.
-  it('rejects listing_id_sha without a url (compass 410s the slug-less form)', () => {
-    expect(() => buildPath({ listing_id_sha: 'abc123' })).toThrow(
-      /listing_id_sha alone is not enough/i
-    );
-    // The error must point the caller at the search result's `url` field
-    // so the next-best-action is obvious to both humans and LLMs.
-    expect(() => buildPath({ listing_id_sha: 'abc123' })).toThrow(/url/);
-  });
-
   it('preserves a path-shaped URL', () => {
     expect(buildPath({ url: '/homedetails/foo/abc_lid/' })).toBe(
       '/homedetails/foo/abc_lid/'
@@ -45,6 +33,66 @@ describe('buildPath', () => {
 
   it('throws when neither argument is provided', () => {
     expect(() => buildPath({})).toThrow(/listing_id_sha or url/);
+  });
+
+  it('returns null for a sha-only call so callers can run the async resolver', () => {
+    // buildPath is sync, and sha-only resolution needs an HTTP call.
+    // Returning null here lets fetchListingRecord branch to the async
+    // resolver without buildPath having to take a client.
+    expect(buildPath({ listing_id_sha: 'abc123' })).toBeNull();
+  });
+});
+
+describe('resolvePathFromSha', () => {
+  it('searches /homes-for-sale/?q=<sha> and returns the matching pageLink', async () => {
+    const uc = {
+      sharedReactAppProps: {
+        initialResults: {
+          lolResults: {
+            data: [
+              {
+                listing: {
+                  listingIdSHA: '1887095624271872617',
+                  pageLink:
+                    '/homedetails/126-Sleeping-Bear-Ln-Lake-Lure-NC-28746/1887095624271872617_lid/',
+                },
+              },
+            ],
+          },
+        },
+      },
+    };
+    const html = `<html><script>global.uc = ${JSON.stringify(uc)};</script></html>`;
+    const fetchHtml = vi.fn().mockResolvedValueOnce(html);
+    const client = { fetchHtml } as unknown as CompassClient;
+
+    const path = await resolvePathFromSha(client, '1887095624271872617');
+    expect(fetchHtml).toHaveBeenCalledWith(
+      '/homes-for-sale/?q=1887095624271872617'
+    );
+    expect(path).toBe(
+      '/homedetails/126-Sleeping-Bear-Ln-Lake-Lure-NC-28746/1887095624271872617_lid/'
+    );
+  });
+
+  it('throws a clear error when no result matches the sha', async () => {
+    const uc = {
+      sharedReactAppProps: {
+        initialResults: { lolResults: { data: [] } },
+      },
+    };
+    const fetchHtml = vi
+      .fn()
+      .mockResolvedValueOnce(
+        `<html><script>global.uc = ${JSON.stringify(uc)};</script></html>`
+      );
+    const client = { fetchHtml } as unknown as CompassClient;
+    await expect(resolvePathFromSha(client, 'unknown-sha')).rejects.toThrow(
+      /unknown-sha/
+    );
+    await expect(resolvePathFromSha(client, 'unknown-sha')).rejects.toThrow(
+      /url/
+    );
   });
 });
 
@@ -156,6 +204,28 @@ describe('format', () => {
     const out = format({ listingIdSHA: 'abc' });
     expect(out.url).toBe('https://www.compass.com/homedetails/abc_lid/');
   });
+
+  it('surfaces pid alongside listing_id_sha when navigationPageLink is a _pid/ form', () => {
+    // Issue #27: `_pid/` URLs are stable across re-listings, `_lid/`
+    // URLs are content-addressed by sha and go stale. Callers building
+    // trackers/bookmarks want the `pid` so they can construct the
+    // stable URL form themselves.
+    const out = format({
+      listingIdSHA: '2109718971930079225',
+      pageLink: '/homedetails/foo/2109718971930079225_lid/',
+      navigationPageLink: '/homedetails/foo/203T5X_pid/',
+    });
+    expect(out.pid).toBe('203T5X');
+    expect(out.listing_id_sha).toBe('2109718971930079225');
+  });
+
+  it('omits pid when no navigationPageLink is present', () => {
+    const out = format({
+      listingIdSHA: 'abc',
+      pageLink: '/homedetails/foo/abc_lid/',
+    });
+    expect(out.pid).toBeUndefined();
+  });
 });
 
 describe('compass_get_property tool', () => {
@@ -197,17 +267,68 @@ describe('compass_get_property tool', () => {
     expect(parsed.localized_status).toBe('Coming Soon');
   });
 
-  it('returns a clear error when called with listing_id_sha alone', async () => {
+  it('resolves a sha-only call by searching for the slug, then fetches the listing', async () => {
+    // Step 1: sha-only invocation triggers the resolver, which calls
+    // /homes-for-sale/?q=<sha> and looks for the matching lolResults entry.
+    const searchUc = {
+      sharedReactAppProps: {
+        initialResults: {
+          lolResults: {
+            totalItems: 1,
+            data: [
+              {
+                listing: {
+                  listingIdSHA: 'abc',
+                  pageLink: '/homedetails/foo/abc_lid/',
+                },
+              },
+            ],
+          },
+        },
+      },
+    };
+    const searchHtml = `<html><script>global.uc = ${JSON.stringify(searchUc)};</script></html>`;
+    // Step 2: the resolver path is then fetched normally for the listing record.
+    const listingHtml = htmlWith({
+      listingIdSHA: 'abc',
+      pageLink: '/homedetails/foo/abc_lid/',
+      location: { prettyAddress: '1 Main' },
+    });
+    mockFetchHtml
+      .mockResolvedValueOnce(searchHtml)
+      .mockResolvedValueOnce(listingHtml);
+
     const r = await harness.callTool('compass_get_property', {
-      listing_id_sha: '2079240952806311449',
+      listing_id_sha: 'abc',
+    });
+    expect(r.isError).toBeFalsy();
+    expect(mockFetchHtml.mock.calls.map((c) => c[0])).toEqual([
+      '/homes-for-sale/?q=abc',
+      '/homedetails/foo/abc_lid/',
+    ]);
+    const parsed = parseToolResult<{ address: string; listing_id_sha: string }>(r);
+    expect(parsed.address).toBe('1 Main');
+    expect(parsed.listing_id_sha).toBe('abc');
+  });
+
+  it('returns a clear error when a sha-only call resolves to nothing', async () => {
+    // Resolver returns no matching entry → tool surfaces a helpful error
+    // that names the next-best-action: pass the `url` from a search result.
+    const searchUc = {
+      sharedReactAppProps: {
+        initialResults: { lolResults: { totalItems: 0, data: [] } },
+      },
+    };
+    mockFetchHtml.mockResolvedValueOnce(
+      `<html><script>global.uc = ${JSON.stringify(searchUc)};</script></html>`
+    );
+    const r = await harness.callTool('compass_get_property', {
+      listing_id_sha: 'no-such-sha',
     });
     expect(r.isError).toBeTruthy();
     const text = (r.content[0] as { text: string }).text;
-    // Must explain the failure and point at the `url` field of search results.
-    expect(text).toMatch(/listing_id_sha alone is not enough/i);
+    expect(text).toMatch(/no-such-sha/);
     expect(text).toMatch(/url/);
-    // Must NOT have fired an HTTP fetch — we short-circuit before the bridge.
-    expect(mockFetchHtml).not.toHaveBeenCalled();
   });
 
   it('throws when __INITIAL_DATA__ is absent', async () => {

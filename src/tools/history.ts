@@ -2,6 +2,7 @@ import { z } from 'zod';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import type { CompassClient } from '../client.js';
 import { textResult } from '../mcp.js';
+import { extractPidFromUrl } from '../url.js';
 import {
   fetchListingRecord,
   type RawListingHistoryEvent,
@@ -62,7 +63,7 @@ export function registerHistoryTools(
     {
       title: 'Get Compass listing-history events',
       description:
-        "Full listing history for a Compass property — Listed / Sold / Pending / Price Change / Delisted events with date, price, and MLS attribution. Returns two parallel arrays: `events` covers this listing's events, `history` aggregates events from prior listings of the same property. Pass `url` — the full Compass homedetails URL or path (e.g. from a compass_search_properties result's `url` field). `listing_id_sha` alone is NOT enough — Compass requires the address slug too and returns 410 Gone for the slug-less URL. Read-only; safe to call repeatedly.",
+        "Full listing history for a Compass property — Listed / Sold / Pending / Price Change / Delisted events with date, price, and MLS attribution. Returns two parallel arrays: `events` covers this listing's events, `history` aggregates events from prior listings of the same property. Pass either `url` (the full Compass homedetails URL or path) or `listing_id_sha` alone — sha-only calls are resolved internally via Compass site search. Read-only; safe to call repeatedly.",
       annotations: {
         title: 'Get Compass listing-history events',
         readOnlyHint: true,
@@ -74,13 +75,13 @@ export function registerHistoryTools(
           .string()
           .optional()
           .describe(
-            'Compass homedetails URL or path. Required — pass the `url` field from a compass_search_properties result.'
+            'Compass homedetails URL or path (preferred — no resolver round-trip needed).'
           ),
         listing_id_sha: z
           .string()
           .optional()
           .describe(
-            'The bare Compass listing identifier. INSUFFICIENT on its own — Compass returns 410 Gone for /homedetails/<sha>_lid/ without the address slug. Pass `url` instead.'
+            'Compass listing identifier. Sufficient on its own — the tool resolves the address slug internally via site search before fetching.'
           ),
       },
     },
@@ -93,6 +94,10 @@ export function registerHistoryTools(
       const history = (listing.history ?? []).map(formatHistoryEvent);
       return textResult({
         listing_id_sha: listing.listingIdSHA,
+        // `pid` is the stable short ID (from navigationPageLink's
+        // `_pid/` form) — survives re-listings; the `listing_id_sha`
+        // above does not. See issue #27.
+        pid: extractPidFromUrl(listing.navigationPageLink),
         url: listing.pageLink
           ? `https://www.compass.com${listing.pageLink}`
           : undefined,

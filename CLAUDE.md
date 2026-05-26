@@ -21,6 +21,7 @@ This is a "Pattern A" fetchproxy MCP (every call rides through fetchproxy), not 
 | `compass_get_saved_searches` | `tools/saved.ts` | **Not yet supported in v0.1.0** — placeholder that throws a clear error | read (auth, todo) |
 | `compass_calculate_mortgage` | `tools/mortgage.ts` | (local; no network) | read |
 | `compass_calculate_affordability` | `tools/affordability.ts` | (local; no network) | read |
+| `compass_get_by_address` | `tools/by-address.ts` | `GET /homes-for-sale/?q=<address>` SSR — extract top `lolResults.data[]` entry | read |
 
 ## Architecture
 
@@ -44,6 +45,7 @@ src/
     saved.ts            # compass_get_saved_homes + compass_get_saved_searches (v0.1 stubs)
     mortgage.ts         # compass_calculate_mortgage (local PITI)
     affordability.ts    # compass_calculate_affordability (local DTI math)
+    by-address.ts       # compass_get_by_address (address → canonical URL + ids)
 
 tests/                  # 1:1 mirror of src/, plus tests/helpers.ts harness.
                         #   All tests mock CompassClient.fetchHtml.

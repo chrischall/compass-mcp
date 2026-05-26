@@ -2,8 +2,9 @@ import { z } from 'zod';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import type { CompassClient } from '../client.js';
 import { textResult } from '../mcp.js';
-import { extractInitialData } from '../page-state.js';
-import { urlToPath } from '../url.js';
+import { extractInitialData, extractUc } from '../page-state.js';
+import { extractPidFromUrl, urlToPath } from '../url.js';
+import { findLolResults } from './search.js';
 
 /**
  * Compass homedetails: GET /homedetails/<slug>/<listingIdSHA>_lid/
@@ -131,6 +132,16 @@ export interface RawListing {
 
 export interface FormattedProperty {
   listing_id_sha?: string;
+  /**
+   * Compass's opaque short ID — present when the listing's
+   * `navigationPageLink` is a `<slug>/<pid>_pid/` form. The `_pid/`
+   * URL is **stable across re-listings**, while `_lid/` URLs are
+   * content-addressed by sha and go stale when a property is
+   * delisted/relisted. Prefer the pid for any long-lived reference
+   * (trackers, sheets, bookmarks); use the sha to fetch the *current*
+   * listing record.
+   */
+  pid?: string;
   compass_property_id?: number;
   url: string;
   property_url?: string;
@@ -198,47 +209,80 @@ export function findListing(data: Record<string, unknown>): RawListing | null {
 }
 
 /**
- * Resolve a homedetails path. Requires a full URL — Compass routes
- * homedetails by `/homedetails/<slug>/<sha>_lid/` and returns 410 Gone
- * for the slug-less `/homedetails/<sha>_lid/` form, so a bare
- * `listing_id_sha` is not enough to construct a working request.
+ * Resolve a homedetails path synchronously. Returns the path if a `url`
+ * was supplied, `null` if a `listing_id_sha` was supplied alone (caller
+ * should fall through to the async `resolvePathFromSha`), and throws if
+ * neither was supplied.
  *
- * The search response (`compass_search_properties`) always returns a
- * `url` field with both slug and sha. Pass that.
+ * Compass routes homedetails by `/homedetails/<slug>/<sha>_lid/` — the
+ * slug-less `/homedetails/<sha>_lid/` form returns 410 Gone — so a bare
+ * sha cannot become a working path without an extra lookup. That lookup
+ * is async (it hits Compass's search), so this function returns `null`
+ * to defer; sync callers should use the async resolver instead.
  */
 export function buildPath(args: {
   listing_id_sha?: string;
   url?: string;
-}): string {
+}): string | null {
   if (args.url) return urlToPath(args.url);
-  if (args.listing_id_sha) {
-    // No tool-name prefix here: buildPath is shared by every tool
-    // that routes through fetchListingRecord (compass_get_property,
-    // compass_get_property_photos, compass_get_price_history,
-    // compass_compare_properties). Naming a specific tool in the
-    // shared error would mislead callers of the siblings.
-    throw new Error(
-      `listing_id_sha alone is not enough — Compass requires the full ` +
-        `/homedetails/<slug>/<sha>_lid/ path. Pass the \`url\` field from ` +
-        `a compass_search_properties result instead ` +
-        `(e.g. "https://www.compass.com/homedetails/.../${args.listing_id_sha}_lid/").`
-    );
-  }
+  if (args.listing_id_sha) return null;
   throw new Error(
     'compass property tool: must provide either listing_id_sha or url'
   );
 }
 
 /**
+ * Resolve a `listing_id_sha` to a full `/homedetails/<slug>/<sha>_lid/`
+ * path by querying Compass's site search. Compass's free-text search
+ * endpoint accepts a listing-id-sha as a `q=` parameter and surfaces
+ * the matching listing in `lolResults.data[]` with its canonical
+ * `pageLink`.
+ *
+ * Throws when no result matches — the error names the sha and points
+ * the caller at the `url` field of a `compass_search_properties` result
+ * as a manual fallback.
+ */
+export async function resolvePathFromSha(
+  client: CompassClient,
+  sha: string
+): Promise<string> {
+  const searchPath = `/homes-for-sale/?q=${encodeURIComponent(sha)}`;
+  const html = await client.fetchHtml(searchPath);
+  const uc = extractUc(html);
+  const lol = uc ? findLolResults(uc) : null;
+  const match = (lol?.data ?? []).find(
+    (entry) => entry?.listing?.listingIdSHA === sha
+  );
+  const pageLink = match?.listing?.pageLink;
+  if (!pageLink) {
+    throw new Error(
+      `Could not resolve listing_id_sha "${sha}" to a Compass URL via site search. ` +
+        `Compass returns 410 Gone for the slug-less /homedetails/<sha>_lid/ form, ` +
+        `and no /homes-for-sale/?q=<sha> result matched. If you have the address, ` +
+        `pass the \`url\` field from a compass_search_properties result instead.`
+    );
+  }
+  return urlToPath(pageLink);
+}
+
+/**
  * Fetch + parse a Compass listing record. Shared by `compass_get_property`,
  * `compass_get_property_photos`, `compass_get_price_history`, and
  * `compass_compare_properties`.
+ *
+ * When called with `listing_id_sha` alone, runs `resolvePathFromSha`
+ * first to recover the canonical `/homedetails/<slug>/<sha>_lid/` path
+ * via Compass site search, then fetches normally.
  */
 export async function fetchListingRecord(
   client: CompassClient,
   args: { listing_id_sha?: string; url?: string }
 ): Promise<{ listing: RawListing; path: string }> {
-  const path = buildPath(args);
+  let path = buildPath(args);
+  if (path === null) {
+    // buildPath returned null → sha-only call. Resolve via search.
+    path = await resolvePathFromSha(client, args.listing_id_sha as string);
+  }
   const html = await client.fetchHtml(path);
   const data = extractInitialData(html);
   if (!data) {
@@ -270,8 +314,10 @@ export function format(listing: RawListing): FormattedProperty {
   const propertyUrl = listing.navigationPageLink
     ? `https://www.compass.com${listing.navigationPageLink}`
     : undefined;
+  const pid = extractPidFromUrl(listing.navigationPageLink);
   return {
     listing_id_sha: listing.listingIdSHA,
+    pid,
     compass_property_id: listing.compassPropertyId,
     url,
     property_url: propertyUrl,
@@ -330,33 +376,26 @@ export function registerPropertyTools(
     {
       title: 'Get Compass property details',
       description:
-        "Fetch a property's full Compass record. Pass `url` — the full Compass homedetails URL or path (e.g. from a compass_search_properties result's `url` field). Returns address, neighborhood, beds/baths, sqft, price + price-per-sqft, monthly charges, MLS status, amenities, schools, parcel number, and the canonical Compass URL. `listing_id_sha` alone is NOT enough — Compass requires the address slug too and returns 410 Gone for the slug-less URL. Read-only; safe to call repeatedly.",
+        "Fetch a property's full Compass record. Pass either `url` (a full Compass homedetails URL or path from a compass_search_properties result) or `listing_id_sha` alone — when only the sha is supplied, the tool resolves the canonical /homedetails/<slug>/<sha>_lid/ path internally via Compass site search. Returns address, neighborhood, beds/baths, sqft, price + price-per-sqft, monthly charges, MLS status, amenities, schools, parcel number, and the canonical Compass URL.\n\n" +
+        "URL FORMS: Compass exposes two URL shapes for a listing. `_lid/` (content-addressed by `listing_id_sha`) — what this tool fetches and what `url` returns — is the form to use for reading the current listing record. `_pid/` (opaque short ID, in `property_url` and the surfaced `pid` field) is **stable across re-listings** and is the right choice for any long-lived reference (trackers, sheets, bookmarks); sha-based URLs go stale when a property is delisted and relisted. Read-only; safe to call repeatedly.",
       annotations: {
         title: 'Get Compass property details',
         readOnlyHint: true,
         idempotentHint: true,
         openWorldHint: true,
       },
-      // Both fields are kept `.optional()` on purpose: a strict
-      // `z.string()` on `url` would make MCP's schema validator reject
-      // sha-only callers with a generic "url Required" message — but
-      // the friendly, educational error from buildPath ("listing_id_sha
-      // alone is not enough — pass the `url` field from a search
-      // result") is more useful to LLMs and humans alike. The runtime
-      // guard in buildPath is the source of truth; the description
-      // says "Required" because functionally it is.
       inputSchema: {
         url: z
           .string()
           .optional()
           .describe(
-            'Compass homedetails URL or path (e.g. /homedetails/162-04-12th-Rd-Queens-NY-11357/2109718971930079225_lid/). Required — pass the `url` field from a compass_search_properties result.'
+            'Compass homedetails URL or path (e.g. /homedetails/162-04-12th-Rd-Queens-NY-11357/2109718971930079225_lid/). One of `url` or `listing_id_sha` is required; pass `url` when you have it (no resolver fetch needed).'
           ),
         listing_id_sha: z
           .string()
           .optional()
           .describe(
-            'The bare Compass listing identifier. INSUFFICIENT on its own — Compass returns 410 Gone for /homedetails/<sha>_lid/ without the address slug. Pass `url` instead.'
+            'Compass listing identifier (the SHA inside `<sha>_lid`). Sufficient on its own — the tool will resolve the address slug internally via Compass site search before fetching the homedetails page (one extra HTTP round-trip).'
           ),
       },
     },
