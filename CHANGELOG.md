@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.6.2](https://github.com/chrischall/compass-mcp/compare/v0.6.1...v0.6.2) (2026-05-26)
+
+
+### Documentation
+
+* **claude:** warn against early PRs and call out first-party dep bumps ([#23](https://github.com/chrischall/compass-mcp/issues/23)) ([0780983](https://github.com/chrischall/compass-mcp/commit/07809831828153fe037ff5cb92d9b6049662857b))
+
 ## [0.6.1](https://github.com/chrischall/compass-mcp/compare/v0.6.0...v0.6.1) (2026-05-25)
 
 
