@@ -156,12 +156,29 @@ export interface SearchInput {
   beds_max?: number;
   home_type?: HomeType;
   limit?: number;
+  /** Zero-based offset into the result set. Only consumed by the tool layer. */
+  offset?: number;
+  /** 1-based Compass page index used for URL construction. */
+  page?: number;
 }
 
 /**
- * Build the `/homes-for-sale/<slug>/<filters>/` path for a search.
- * Order matches Compass's URL canonicalization: beds, then price,
- * then home type. Returns a leading-slash path ready for fetchHtml.
+ * Compass server-renders search results in fixed-size batches in the
+ * SSR `lolResults.data[]` array. Subsequent pages are fetched via a
+ * `/page-N/` path segment.
+ *
+ * The page size is a Compass server-side constant; we observe 5 per
+ * page on `/homes-for-sale/...` SSR responses. Used to translate an
+ * `offset` into a page index for `buildSearchPath`.
+ */
+export const COMPASS_PAGE_SIZE = 5;
+
+/**
+ * Build the `/homes-for-sale/<slug>/<filters>/[page-N/]` path for a
+ * search. Order matches Compass's URL canonicalization: beds, then
+ * price, then home type, then page. Returns a leading-slash path ready
+ * for fetchHtml. `page=1` is left unsuffixed — Compass canonicalizes
+ * page 1 to the bare URL and redirects `/page-1/` to it.
  */
 export function buildSearchPath(input: SearchInput): string {
   const slug = locationToSlug(input.location);
@@ -177,6 +194,9 @@ export function buildSearchPath(input: SearchInput): string {
     segments.push(`${lo}-${hi}-price`);
   }
   if (input.home_type) segments.push(HOME_TYPE_SLUG[input.home_type]);
+  if (input.page !== undefined && input.page > 1) {
+    segments.push(`page-${input.page}`);
+  }
   const filters = segments.length > 0 ? segments.join('/') + '/' : '';
   return `/homes-for-sale/${slug}/${filters}`;
 }
@@ -217,7 +237,10 @@ export function registerSearchTools(
     {
       title: 'Search Compass listings',
       description:
-        "Search Compass listings by location (city, ZIP, neighborhood) and optional filters. Resolves free-text via slugification into Compass's URL routing, then fetches the SSR search-results page and extracts the embedded listings array. Returns each matching listing's address, price, beds/baths, sqft, primary photo URL, lat/lng, and the Compass homedetails URL. Read-only; safe to call repeatedly.",
+        "Search Compass listings by location (city, ZIP, neighborhood) and optional filters. Resolves free-text via slugification into Compass's URL routing, then fetches the SSR search-results pages and extracts the embedded listings array. Compass returns " +
+        `${COMPASS_PAGE_SIZE} listings per SSR page; this tool fetches additional pages as needed to satisfy \`limit\`, and accepts \`offset\` for cursor-style continuation. ` +
+        'When more results remain, the response carries `next_offset` — pass it back as `offset` to page forward. ' +
+        "Returns each matching listing's address, price, beds/baths, sqft, primary photo URL, lat/lng, and the Compass homedetails URL. Read-only; safe to call repeatedly.",
       annotations: {
         title: 'Search Compass listings',
         readOnlyHint: true,
@@ -243,31 +266,92 @@ export function registerSearchTools(
           .int()
           .positive()
           .optional()
-          .describe('Max listings to return (default 40).'),
+          .describe(
+            `Max listings to return (default 40). Compass server-renders ${COMPASS_PAGE_SIZE} listings per page, so honoring a larger limit fans out across multiple page fetches.`
+          ),
+        offset: z
+          .number()
+          .int()
+          .nonnegative()
+          .optional()
+          .describe(
+            'Zero-based offset into the result set, for cursor-style pagination. Use the `next_offset` value from a previous response to fetch the next page. Default 0.'
+          ),
       },
     },
     async (input) => {
-      const path = buildSearchPath(input);
-      const html = await client.fetchHtml(path);
-      const uc = extractUc(html);
-      if (!uc) {
-        throw new Error(
-          `compass_search_properties: could not extract the uc state object from ${path}. ` +
-            `Compass may have changed their page bootstrap.`
-        );
-      }
-      const lol = findLolResults(uc);
-      const raw = lol?.data ?? [];
       const limit = input.limit ?? 40;
-      const formatted = raw
-        .map(formatHome)
-        .filter((h): h is FormattedHome => h !== null)
-        .slice(0, limit);
+      const offset = input.offset ?? 0;
+      const startPage = Math.floor(offset / COMPASS_PAGE_SIZE) + 1;
+      const intraPageSkip = offset % COMPASS_PAGE_SIZE;
+
+      const firstPath = buildSearchPath({ ...input, page: startPage });
+
+      const collected: FormattedHome[] = [];
+      let totalItems: number | undefined;
+      let currentPage = startPage;
+      let pagesFetched = 0;
+
+      // Fetch successive Compass pages until we have `limit` formatted
+      // results or the source runs out. Bound the loop by `totalItems`
+      // when present and by a hard cap as a safety net.
+      const MAX_PAGES = 50;
+      let pathLog = firstPath;
+      while (collected.length < limit && pagesFetched < MAX_PAGES) {
+        const path = buildSearchPath({ ...input, page: currentPage });
+        if (pagesFetched === 0) pathLog = path;
+        const html = await client.fetchHtml(path);
+        const uc = extractUc(html);
+        if (!uc) {
+          throw new Error(
+            `compass_search_properties: could not extract the uc state object from ${path}. ` +
+              `Compass may have changed their page bootstrap.`
+          );
+        }
+        const lol = findLolResults(uc);
+        if (totalItems === undefined) totalItems = lol?.totalItems;
+        const raw = lol?.data ?? [];
+        const formattedPage = raw
+          .map(formatHome)
+          .filter((h): h is FormattedHome => h !== null);
+
+        // On the first page, skip the intra-page offset; subsequent
+        // pages start clean.
+        const sliceStart = pagesFetched === 0 ? intraPageSkip : 0;
+        for (let i = sliceStart; i < formattedPage.length; i += 1) {
+          if (collected.length >= limit) break;
+          collected.push(formattedPage[i]);
+        }
+
+        pagesFetched += 1;
+        // If Compass returned fewer than a full page, the result set is
+        // exhausted — stop early even if we have not hit `limit`.
+        if (formattedPage.length < COMPASS_PAGE_SIZE) break;
+        // Likewise, if we know totalItems, stop once we have visited
+        // them all.
+        if (
+          totalItems !== undefined &&
+          offset + collected.length >= totalItems
+        ) {
+          break;
+        }
+        currentPage += 1;
+      }
+
+      const consumed = offset + collected.length;
+      const hasMore =
+        totalItems !== undefined
+          ? consumed < totalItems
+          : // Without totalItems, infer "more" from a saturated last page.
+            collected.length >= limit;
+
       return textResult({
-        search_path: path,
-        total_items: lol?.totalItems,
-        count: formatted.length,
-        results: formatted,
+        search_path: pathLog,
+        total_items: totalItems,
+        count: collected.length,
+        offset,
+        results: collected,
+        ...(hasMore ? { next_offset: consumed } : {}),
       });
     }
   );
