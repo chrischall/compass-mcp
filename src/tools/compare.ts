@@ -72,7 +72,7 @@ export function registerCompareTools(
     {
       title: 'Compare Compass properties side-by-side',
       description:
-        "Fetch 2 or more Compass properties and align their facts side-by-side. Each target must supply a `url` — the full Compass homedetails URL or path (e.g. from a compass_search_properties result's `url` field). `listing_id_sha` alone is NOT enough; Compass returns 410 Gone for the slug-less URL, surfaced as a per-row error here. Returns a compact summary table aligned by field (address, price, beds/baths, sqft, $/sqft, status, etc.) plus the full per-property record. Per-target errors are captured per-row — one bad target will not fail the whole call. Calls are concurrent.",
+        "Fetch 2 or more Compass properties and align their facts side-by-side. Each target may supply `url` (a full Compass homedetails URL or path) or `listing_id_sha` alone — sha-only targets are resolved internally via Compass site search before fetching. Returns a compact summary table aligned by field (address, price, beds/baths, sqft, $/sqft, status, etc.) plus the full per-property record. Per-target errors are captured per-row — one bad target will not fail the whole call. Calls are concurrent.",
       annotations: {
         title: 'Compare Compass properties side-by-side',
         readOnlyHint: true,
@@ -88,13 +88,13 @@ export function registerCompareTools(
                   .string()
                   .optional()
                   .describe(
-                    'Compass homedetails URL or path. Required per target — pass the `url` field from a compass_search_properties result.'
+                    'Compass homedetails URL or path (preferred — no resolver round-trip needed).'
                   ),
                 listing_id_sha: z
                   .string()
                   .optional()
                   .describe(
-                    'The bare Compass listing identifier. INSUFFICIENT on its own — Compass returns 410 Gone for /homedetails/<sha>_lid/ without the address slug. Pass `url` instead.'
+                    'Compass listing identifier. Sufficient on its own — the tool resolves the address slug internally via site search before fetching the homedetails page.'
                   ),
               })
               .passthrough()
