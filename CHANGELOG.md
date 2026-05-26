@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.6.1](https://github.com/chrischall/compass-mcp/compare/v0.6.0...v0.6.1) (2026-05-25)
+
+
+### Bug Fixes
+
+* **ci:** prevent labeled event from cancelling auto-review ([#20](https://github.com/chrischall/compass-mcp/issues/20)) ([c3e7c04](https://github.com/chrischall/compass-mcp/commit/c3e7c0406902d2e39dd58c5c0503dc60b8b0ef06))
+
 ## [0.6.0](https://github.com/chrischall/compass-mcp/compare/v0.5.0...v0.6.0) (2026-05-25)
 
 
