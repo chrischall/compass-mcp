@@ -54,6 +54,25 @@ describe('buildSearchPath', () => {
       })
     ).toBe('/homes-for-sale/x/2-3-bed/500000-1200000-price/type-condo/');
   });
+
+  it('omits a /page-1/ segment for the first page', () => {
+    // Compass canonicalizes page 1 to the unsuffixed URL; appending
+    // /page-1/ produces a redirect, so we drop it.
+    expect(buildSearchPath({ location: 'x', page: 1 })).toBe(
+      '/homes-for-sale/x/'
+    );
+  });
+
+  it('appends a /page-N/ segment after the filters for N > 1', () => {
+    expect(
+      buildSearchPath({
+        location: 'x',
+        beds_min: 2,
+        beds_max: 3,
+        page: 2,
+      })
+    ).toBe('/homes-for-sale/x/2-3-bed/page-2/');
+  });
 });
 
 describe('formatHome', () => {
@@ -86,6 +105,7 @@ describe('formatHome', () => {
     });
     expect(out).toEqual({
       listing_id_sha: '2109718971930079225',
+      pid: '203T5X',
       url: 'https://www.compass.com/homedetails/foo/2109718971930079225_lid/',
       property_url: 'https://www.compass.com/homedetails/foo/203T5X_pid/',
       address: '162-04 12th Road',
@@ -120,6 +140,30 @@ describe('formatHome', () => {
     });
     expect(out?.beds).toBe(2);
     expect(out?.baths).toBe(1.5);
+  });
+
+  it('surfaces pid alongside listing_id_sha when navigationPageLink is a _pid/ form', () => {
+    // Issue #27: `_pid/` URLs survive re-listings, `_lid/` URLs do not.
+    // Callers tracking a property across listing cycles want the pid.
+    const out = formatHome({
+      listing: {
+        listingIdSHA: '2109718971930079225',
+        pageLink: '/homedetails/foo/2109718971930079225_lid/',
+        navigationPageLink: '/homedetails/foo/203T5X_pid/',
+      },
+    });
+    expect(out?.pid).toBe('203T5X');
+    expect(out?.listing_id_sha).toBe('2109718971930079225');
+  });
+
+  it('omits pid when no navigationPageLink is present', () => {
+    const out = formatHome({
+      listing: {
+        listingIdSHA: '1',
+        pageLink: '/homedetails/foo/1_lid/',
+      },
+    });
+    expect(out?.pid).toBeUndefined();
   });
 });
 
@@ -216,6 +260,197 @@ describe('compass_search_properties tool', () => {
     });
     const parsed = parseToolResult<{ results: unknown[] }>(r);
     expect(parsed.results).toHaveLength(3);
+  });
+
+  it('fetches additional Compass pages when limit exceeds one page', async () => {
+    // Compass server-renders 5 listings per page; honoring a larger
+    // limit means fetching /page-2/, /page-3/, etc. and concatenating.
+    const page = (start: number, count: number, total: number) => {
+      const listings = Array.from({ length: count }, (_, i) => ({
+        listing: { listingIdSHA: String(start + i), pageLink: `/h/${start + i}/` },
+      }));
+      const uc = {
+        sharedReactAppProps: {
+          initialResults: {
+            lolResults: { totalItems: total, data: listings },
+          },
+        },
+      };
+      return `<html><script>global.uc = ${JSON.stringify(uc)};</script></html>`;
+    };
+    mockFetchHtml
+      .mockResolvedValueOnce(page(1, 5, 11)) // page 1
+      .mockResolvedValueOnce(page(6, 5, 11)) // page 2
+      .mockResolvedValueOnce(page(11, 1, 11)); // page 3 (partial)
+
+    const r = await harness.callTool('compass_search_properties', {
+      location: 'Mill Spring NC',
+      price_min: 400000,
+      price_max: 600000,
+      limit: 11,
+    });
+    expect(r.isError).toBeFalsy();
+    expect(mockFetchHtml.mock.calls.map((c) => c[0])).toEqual([
+      '/homes-for-sale/mill-spring-nc/400000-600000-price/',
+      '/homes-for-sale/mill-spring-nc/400000-600000-price/page-2/',
+      '/homes-for-sale/mill-spring-nc/400000-600000-price/page-3/',
+    ]);
+    const parsed = parseToolResult<{
+      count: number;
+      total_items: number;
+      results: Array<{ listing_id_sha: string }>;
+      next_offset?: number;
+    }>(r);
+    expect(parsed.count).toBe(11);
+    expect(parsed.total_items).toBe(11);
+    expect(parsed.results.map((x) => x.listing_id_sha)).toEqual([
+      '1', '2', '3', '4', '5', '6', '7', '8', '9', '10', '11',
+    ]);
+    // All exhausted: no continuation cursor.
+    expect(parsed.next_offset).toBeUndefined();
+  });
+
+  it('honors offset by skipping to the right Compass page', async () => {
+    // offset=5 → start at page 2's first result. With limit=3 we get
+    // listings 6,7,8 and a next_offset=8 for further paging.
+    const uc = (data: unknown[], total: number) => ({
+      sharedReactAppProps: {
+        initialResults: { lolResults: { totalItems: total, data } },
+      },
+    });
+    const html = (data: unknown[], total: number) =>
+      `<html><script>global.uc = ${JSON.stringify(uc(data, total))};</script></html>`;
+    const mk = (start: number, count: number) =>
+      Array.from({ length: count }, (_, i) => ({
+        listing: { listingIdSHA: String(start + i), pageLink: `/h/${start + i}/` },
+      }));
+    mockFetchHtml.mockResolvedValueOnce(html(mk(6, 5), 11)); // page 2
+
+    const r = await harness.callTool('compass_search_properties', {
+      location: 'x',
+      offset: 5,
+      limit: 3,
+    });
+    expect(r.isError).toBeFalsy();
+    expect(mockFetchHtml.mock.calls.map((c) => c[0])).toEqual([
+      '/homes-for-sale/x/page-2/',
+    ]);
+    const parsed = parseToolResult<{
+      count: number;
+      results: Array<{ listing_id_sha: string }>;
+      next_offset?: number;
+    }>(r);
+    expect(parsed.count).toBe(3);
+    expect(parsed.results.map((x) => x.listing_id_sha)).toEqual(['6', '7', '8']);
+    expect(parsed.next_offset).toBe(8);
+  });
+
+  it('surfaces next_offset when more results are available than were returned', async () => {
+    // With totalItems=11 and we only got 5, the caller can request more.
+    // (htmlWith sets totalItems = listings.length, so this test crafts
+    // its own.)
+    const uc = {
+      sharedReactAppProps: {
+        initialResults: {
+          lolResults: {
+            totalItems: 11,
+            data: Array.from({ length: 5 }, (_, i) => ({
+              listing: { listingIdSHA: String(i + 1), pageLink: `/h/${i}/` },
+            })),
+          },
+        },
+      },
+    };
+    mockFetchHtml.mockResolvedValueOnce(
+      `<html><script>global.uc = ${JSON.stringify(uc)};</script></html>`
+    );
+    const r = await harness.callTool('compass_search_properties', {
+      location: 'x',
+      limit: 5,
+    });
+    const parsed = parseToolResult<{ next_offset?: number }>(r);
+    expect(parsed.next_offset).toBe(5);
+  });
+
+  it('omits next_offset on a partial last page when totalItems is absent', async () => {
+    // Without totalItems, a short page already signals exhaustion — the
+    // fallback `collected.length >= limit` heuristic must not emit a
+    // misleading `next_offset` in this case.
+    const uc = {
+      sharedReactAppProps: {
+        initialResults: {
+          lolResults: {
+            // totalItems intentionally absent
+            data: Array.from({ length: 3 }, (_, i) => ({
+              listing: { listingIdSHA: String(i + 1), pageLink: `/h/${i}/` },
+            })),
+          },
+        },
+      },
+    };
+    mockFetchHtml.mockResolvedValueOnce(
+      `<html><script>global.uc = ${JSON.stringify(uc)};</script></html>`
+    );
+    const r = await harness.callTool('compass_search_properties', {
+      location: 'x',
+      limit: 3,
+    });
+    expect(r.isError).toBeFalsy();
+    const parsed = parseToolResult<{
+      count: number;
+      total_items?: number;
+      next_offset?: number;
+    }>(r);
+    expect(parsed.count).toBe(3);
+    expect(parsed.total_items).toBeUndefined();
+    expect(parsed.next_offset).toBeUndefined();
+  });
+
+  it('keeps paging when a full raw page has some entries filtered out by formatHome', async () => {
+    // Compass occasionally returns cluster entries / "coming soon" stubs
+    // that have no `listingIdSHA`; `formatHome` drops them. The
+    // exhaustion guard must look at the *raw* page size, not the
+    // filtered one — otherwise a partial-after-filter page on a full
+    // raw page would short-circuit and under-deliver results.
+    const page = (start: number, validCount: number, stubCount: number, total: number) => {
+      const valid = Array.from({ length: validCount }, (_, i) => ({
+        listing: { listingIdSHA: String(start + i), pageLink: `/h/${start + i}/` },
+      }));
+      const stubs = Array.from({ length: stubCount }, () => ({
+        listing: {}, // no listingIdSHA → filtered out by formatHome
+      }));
+      const uc = {
+        sharedReactAppProps: {
+          initialResults: {
+            lolResults: { totalItems: total, data: [...valid, ...stubs] },
+          },
+        },
+      };
+      return `<html><script>global.uc = ${JSON.stringify(uc)};</script></html>`;
+    };
+    // Page 1: 5 raw entries (4 valid + 1 stub). raw.length === PAGE_SIZE
+    // so we should NOT short-circuit — fetch page 2 too.
+    mockFetchHtml
+      .mockResolvedValueOnce(page(1, 4, 1, 10))
+      .mockResolvedValueOnce(page(5, 5, 0, 10));
+
+    const r = await harness.callTool('compass_search_properties', {
+      location: 'x',
+      limit: 9,
+    });
+    expect(r.isError).toBeFalsy();
+    expect(mockFetchHtml.mock.calls.map((c) => c[0])).toEqual([
+      '/homes-for-sale/x/',
+      '/homes-for-sale/x/page-2/',
+    ]);
+    const parsed = parseToolResult<{
+      count: number;
+      results: Array<{ listing_id_sha: string }>;
+    }>(r);
+    expect(parsed.count).toBe(9);
+    expect(parsed.results.map((x) => x.listing_id_sha)).toEqual([
+      '1', '2', '3', '4', '5', '6', '7', '8', '9',
+    ]);
   });
 
   it('throws when uc can not be extracted from the HTML', async () => {

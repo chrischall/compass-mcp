@@ -92,6 +92,29 @@ describe('compass_get_property_photos tool', () => {
     expect(parsed.count).toBe(2);
   });
 
+  it('surfaces pid alongside listing_id_sha when navigationPageLink carries a _pid/ form', async () => {
+    mockFetchHtml.mockResolvedValueOnce(
+      `<html><script>window.__INITIAL_DATA__ = ${JSON.stringify({
+        props: {
+          listingRelation: {
+            listing: {
+              listingIdSHA: 'abc',
+              pageLink: '/homedetails/foo/abc_lid/',
+              navigationPageLink: '/homedetails/foo/203T5X_pid/',
+              media: [],
+            },
+          },
+        },
+      })};</script></html>`
+    );
+    const r = await harness.callTool('compass_get_property_photos', {
+      url: '/homedetails/foo/abc_lid/',
+    });
+    const parsed = parseToolResult<{ pid?: string; listing_id_sha: string }>(r);
+    expect(parsed.pid).toBe('203T5X');
+    expect(parsed.listing_id_sha).toBe('abc');
+  });
+
   it('returns count=0 when the listing has no media', async () => {
     mockFetchHtml.mockResolvedValueOnce(htmlWithMedia([]));
     const r = await harness.callTool('compass_get_property_photos', {

@@ -14,6 +14,7 @@ Compass real-estate access as an MCP server for Claude — search listings, fetc
 | `compass_get_price_history` | Full listing-history events (Listed / Sold / Pending / Price Change / Delisted) with date, price, status, and MLS attribution. Returns both this-listing and prior-listing aggregates. | |
 | `compass_compare_properties` | Side-by-side comparison of up to 8 properties with an aligned summary table. Per-target errors captured per-row. Concurrent fetches. | |
 | `compass_calculate_affordability` | Local affordability calculator — max purchase price from income + DTI + rates. No network. | |
+| `compass_get_by_address` | Resolve a free-text street address to the canonical Compass URL, `listing_id_sha`, and `pid` in one call. Returns `{ resolved: false, error: "no listing found" }` rather than throwing when there is no match. | |
 | `compass_calculate_mortgage` | Local PITI calculator — principal+interest, taxes, insurance, HOA, PMI. No network. | |
 | `compass_get_saved_homes` | **Not yet supported in v0.1.0** — Compass renders /overview/favorites via auth-scoped GraphQL we have not yet identified. Throws a clear "not yet wire" error. | ✓ |
 | `compass_get_saved_searches` | **Not yet supported in v0.1.0** — same constraint as saved homes. | ✓ |
