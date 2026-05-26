@@ -285,18 +285,17 @@ export function registerSearchTools(
       const startPage = Math.floor(offset / COMPASS_PAGE_SIZE) + 1;
       const intraPageSkip = offset % COMPASS_PAGE_SIZE;
 
-      const firstPath = buildSearchPath({ ...input, page: startPage });
-
       const collected: FormattedHome[] = [];
       let totalItems: number | undefined;
       let currentPage = startPage;
       let pagesFetched = 0;
+      let shortPage = false;
 
       // Fetch successive Compass pages until we have `limit` formatted
       // results or the source runs out. Bound the loop by `totalItems`
       // when present and by a hard cap as a safety net.
       const MAX_PAGES = 50;
-      let pathLog = firstPath;
+      let pathLog = '';
       while (collected.length < limit && pagesFetched < MAX_PAGES) {
         const path = buildSearchPath({ ...input, page: currentPage });
         if (pagesFetched === 0) pathLog = path;
@@ -326,7 +325,10 @@ export function registerSearchTools(
         pagesFetched += 1;
         // If Compass returned fewer than a full page, the result set is
         // exhausted — stop early even if we have not hit `limit`.
-        if (formattedPage.length < COMPASS_PAGE_SIZE) break;
+        if (formattedPage.length < COMPASS_PAGE_SIZE) {
+          shortPage = true;
+          break;
+        }
         // Likewise, if we know totalItems, stop once we have visited
         // them all.
         if (
@@ -343,7 +345,9 @@ export function registerSearchTools(
         totalItems !== undefined
           ? consumed < totalItems
           : // Without totalItems, infer "more" from a saturated last page.
-            collected.length >= limit;
+            // A short page already signals exhaustion, so suppress the
+            // fallback in that case to avoid a misleading `next_offset`.
+            !shortPage && collected.length >= limit;
 
       return textResult({
         search_path: pathLog,

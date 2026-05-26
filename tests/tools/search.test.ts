@@ -321,13 +321,6 @@ describe('compass_search_properties tool', () => {
   });
 
   it('surfaces next_offset when more results are available than were returned', async () => {
-    mockFetchHtml.mockResolvedValueOnce(
-      htmlWith(
-        Array.from({ length: 5 }, (_, i) => ({
-          listing: { listingIdSHA: String(i + 1), pageLink: `/h/${i}/` },
-        }))
-      )
-    );
     // With totalItems=11 and we only got 5, the caller can request more.
     // (htmlWith sets totalItems = listings.length, so this test crafts
     // its own.)
@@ -343,7 +336,6 @@ describe('compass_search_properties tool', () => {
         },
       },
     };
-    mockFetchHtml.mockReset();
     mockFetchHtml.mockResolvedValueOnce(
       `<html><script>global.uc = ${JSON.stringify(uc)};</script></html>`
     );
@@ -353,6 +345,40 @@ describe('compass_search_properties tool', () => {
     });
     const parsed = parseToolResult<{ next_offset?: number }>(r);
     expect(parsed.next_offset).toBe(5);
+  });
+
+  it('omits next_offset on a partial last page when totalItems is absent', async () => {
+    // Without totalItems, a short page already signals exhaustion — the
+    // fallback `collected.length >= limit` heuristic must not emit a
+    // misleading `next_offset` in this case.
+    const uc = {
+      sharedReactAppProps: {
+        initialResults: {
+          lolResults: {
+            // totalItems intentionally absent
+            data: Array.from({ length: 3 }, (_, i) => ({
+              listing: { listingIdSHA: String(i + 1), pageLink: `/h/${i}/` },
+            })),
+          },
+        },
+      },
+    };
+    mockFetchHtml.mockResolvedValueOnce(
+      `<html><script>global.uc = ${JSON.stringify(uc)};</script></html>`
+    );
+    const r = await harness.callTool('compass_search_properties', {
+      location: 'x',
+      limit: 3,
+    });
+    expect(r.isError).toBeFalsy();
+    const parsed = parseToolResult<{
+      count: number;
+      total_items?: number;
+      next_offset?: number;
+    }>(r);
+    expect(parsed.count).toBe(3);
+    expect(parsed.total_items).toBeUndefined();
+    expect(parsed.next_offset).toBeUndefined();
   });
 
   it('throws when uc can not be extracted from the HTML', async () => {
