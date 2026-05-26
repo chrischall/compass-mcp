@@ -83,7 +83,7 @@ describe('resolvePathFromSha', () => {
     };
     const fetchHtml = vi
       .fn()
-      .mockResolvedValueOnce(
+      .mockResolvedValue(
         `<html><script>global.uc = ${JSON.stringify(uc)};</script></html>`
       );
     const client = { fetchHtml } as unknown as CompassClient;
