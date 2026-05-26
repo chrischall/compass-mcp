@@ -204,6 +204,28 @@ describe('format', () => {
     const out = format({ listingIdSHA: 'abc' });
     expect(out.url).toBe('https://www.compass.com/homedetails/abc_lid/');
   });
+
+  it('surfaces pid alongside listing_id_sha when navigationPageLink is a _pid/ form', () => {
+    // Issue #27: `_pid/` URLs are stable across re-listings, `_lid/`
+    // URLs are content-addressed by sha and go stale. Callers building
+    // trackers/bookmarks want the `pid` so they can construct the
+    // stable URL form themselves.
+    const out = format({
+      listingIdSHA: '2109718971930079225',
+      pageLink: '/homedetails/foo/2109718971930079225_lid/',
+      navigationPageLink: '/homedetails/foo/203T5X_pid/',
+    });
+    expect(out.pid).toBe('203T5X');
+    expect(out.listing_id_sha).toBe('2109718971930079225');
+  });
+
+  it('omits pid when no navigationPageLink is present', () => {
+    const out = format({
+      listingIdSHA: 'abc',
+      pageLink: '/homedetails/foo/abc_lid/',
+    });
+    expect(out.pid).toBeUndefined();
+  });
 });
 
 describe('compass_get_property tool', () => {

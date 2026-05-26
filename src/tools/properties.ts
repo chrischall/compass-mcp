@@ -3,7 +3,7 @@ import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import type { CompassClient } from '../client.js';
 import { textResult } from '../mcp.js';
 import { extractInitialData, extractUc } from '../page-state.js';
-import { urlToPath } from '../url.js';
+import { extractPidFromUrl, urlToPath } from '../url.js';
 import { findLolResults } from './search.js';
 
 /**
@@ -132,6 +132,16 @@ export interface RawListing {
 
 export interface FormattedProperty {
   listing_id_sha?: string;
+  /**
+   * Compass's opaque short ID — present when the listing's
+   * `navigationPageLink` is a `<slug>/<pid>_pid/` form. The `_pid/`
+   * URL is **stable across re-listings**, while `_lid/` URLs are
+   * content-addressed by sha and go stale when a property is
+   * delisted/relisted. Prefer the pid for any long-lived reference
+   * (trackers, sheets, bookmarks); use the sha to fetch the *current*
+   * listing record.
+   */
+  pid?: string;
   compass_property_id?: number;
   url: string;
   property_url?: string;
@@ -304,8 +314,10 @@ export function format(listing: RawListing): FormattedProperty {
   const propertyUrl = listing.navigationPageLink
     ? `https://www.compass.com${listing.navigationPageLink}`
     : undefined;
+  const pid = extractPidFromUrl(listing.navigationPageLink);
   return {
     listing_id_sha: listing.listingIdSHA,
+    pid,
     compass_property_id: listing.compassPropertyId,
     url,
     property_url: propertyUrl,
@@ -364,7 +376,8 @@ export function registerPropertyTools(
     {
       title: 'Get Compass property details',
       description:
-        "Fetch a property's full Compass record. Pass either `url` (a full Compass homedetails URL or path from a compass_search_properties result) or `listing_id_sha` alone — when only the sha is supplied, the tool resolves the canonical /homedetails/<slug>/<sha>_lid/ path internally via Compass site search. Returns address, neighborhood, beds/baths, sqft, price + price-per-sqft, monthly charges, MLS status, amenities, schools, parcel number, and the canonical Compass URL. Read-only; safe to call repeatedly.",
+        "Fetch a property's full Compass record. Pass either `url` (a full Compass homedetails URL or path from a compass_search_properties result) or `listing_id_sha` alone — when only the sha is supplied, the tool resolves the canonical /homedetails/<slug>/<sha>_lid/ path internally via Compass site search. Returns address, neighborhood, beds/baths, sqft, price + price-per-sqft, monthly charges, MLS status, amenities, schools, parcel number, and the canonical Compass URL.\n\n" +
+        "URL FORMS: Compass exposes two URL shapes for a listing. `_lid/` (content-addressed by `listing_id_sha`) — what this tool fetches and what `url` returns — is the form to use for reading the current listing record. `_pid/` (opaque short ID, in `property_url` and the surfaced `pid` field) is **stable across re-listings** and is the right choice for any long-lived reference (trackers, sheets, bookmarks); sha-based URLs go stale when a property is delisted and relisted. Read-only; safe to call repeatedly.",
       annotations: {
         title: 'Get Compass property details',
         readOnlyHint: true,

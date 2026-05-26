@@ -3,6 +3,7 @@ import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import type { CompassClient } from '../client.js';
 import { textResult } from '../mcp.js';
 import { extractUc } from '../page-state.js';
+import { extractPidFromUrl } from '../url.js';
 import { findLolResults } from './search.js';
 
 /**
@@ -61,17 +62,11 @@ function formatAddressLine(input: ByAddressInput): string {
 }
 
 /**
- * Extract the `pid` from a Compass `/listing/<slug>/<pid>_pid/` (or
- * `/homedetails/<slug>/<pid>_pid/`) path. Returns undefined for any
- * other URL shape — including the sha-flavored `_lid/` form.
+ * Re-export of `extractPidFromUrl` under its original tool-local name
+ * for back-compat with callers that imported it from this module before
+ * it was promoted to `src/url.ts`.
  */
-export function extractPidFromNavigationPageLink(
-  link: string | undefined
-): string | undefined {
-  if (!link) return undefined;
-  const m = /\/([A-Za-z0-9]+)_pid\/?$/.exec(link);
-  return m ? m[1] : undefined;
-}
+export { extractPidFromUrl as extractPidFromNavigationPageLink } from '../url.js';
 
 interface ByAddressResolved {
   resolved: true;
@@ -136,7 +131,7 @@ export function registerByAddressTools(
         };
         return textResult(result);
       }
-      const pid = extractPidFromNavigationPageLink(listing.navigationPageLink);
+      const pid = extractPidFromUrl(listing.navigationPageLink);
       // Prefer the stable _pid/ form when available; fall back to _lid/.
       const url = listing.navigationPageLink
         ? `https://www.compass.com${listing.navigationPageLink}`

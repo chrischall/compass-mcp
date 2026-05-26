@@ -2,6 +2,7 @@ import { z } from 'zod';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import type { CompassClient } from '../client.js';
 import { textResult } from '../mcp.js';
+import { extractPidFromUrl } from '../url.js';
 import {
   fetchListingRecord,
   type RawListingHistoryEvent,
@@ -93,6 +94,10 @@ export function registerHistoryTools(
       const history = (listing.history ?? []).map(formatHistoryEvent);
       return textResult({
         listing_id_sha: listing.listingIdSHA,
+        // `pid` is the stable short ID (from navigationPageLink's
+        // `_pid/` form) — survives re-listings; the `listing_id_sha`
+        // above does not. See issue #27.
+        pid: extractPidFromUrl(listing.navigationPageLink),
         url: listing.pageLink
           ? `https://www.compass.com${listing.pageLink}`
           : undefined,
