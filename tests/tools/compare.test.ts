@@ -76,18 +76,38 @@ describe('compass_compare_properties tool', () => {
     ]);
   });
 
-  it('captures sha-only targets as per-row errors with the actionable hint', async () => {
-    // compare.ts must surface the same listing_id_sha-alone error on a
-    // per-row basis (not crash the whole call) so a mixed batch — some
-    // url-shaped, some bare-sha — still returns useful rows for the good
-    // ones and a clear next-action for the bad ones.
-    mockFetchHtml.mockImplementation(async () =>
-      htmlWith({
-        listingIdSHA: 'good',
-        pageLink: '/h/good/',
-        price: { lastKnown: 1_000_000 },
-      })
-    );
+  it('resolves sha-only targets internally and returns them alongside url targets', async () => {
+    // Mixed batch: url-shaped target fetches normally; sha-only target
+    // first hits /homes-for-sale/?q=<sha> to recover the slug, then
+    // fetches the listing record. Both succeed without the caller
+    // having to know the slug.
+    const searchUc = {
+      sharedReactAppProps: {
+        initialResults: {
+          lolResults: {
+            data: [
+              {
+                listing: {
+                  listingIdSHA: '2079240952806311449',
+                  pageLink: '/homedetails/foo/2079240952806311449_lid/',
+                },
+              },
+            ],
+          },
+        },
+      },
+    };
+    const searchHtml = `<html><script>global.uc = ${JSON.stringify(searchUc)};</script></html>`;
+    mockFetchHtml.mockImplementation(async (path: string) => {
+      if (path.startsWith('/homes-for-sale/?q=')) return searchHtml;
+      return htmlWith({
+        listingIdSHA: path.includes('good') ? 'good' : '2079240952806311449',
+        pageLink: path,
+        price: {
+          lastKnown: path.includes('good') ? 1_000_000 : 2_000_000,
+        },
+      });
+    });
 
     const r = await harness.callTool('compass_compare_properties', {
       targets: [
@@ -100,8 +120,9 @@ describe('compass_compare_properties tool', () => {
       results: Array<{ error?: string; property?: { price?: number } }>;
     }>(r);
     expect(parsed.results[0].property?.price).toBe(1_000_000);
-    expect(parsed.results[1].error).toMatch(/listing_id_sha alone is not enough/i);
-    expect(parsed.results[1].error).toMatch(/url/);
+    expect(parsed.results[0].error).toBeUndefined();
+    expect(parsed.results[1].property?.price).toBe(2_000_000);
+    expect(parsed.results[1].error).toBeUndefined();
   });
 
   it('captures per-target errors without failing the whole call', async () => {
