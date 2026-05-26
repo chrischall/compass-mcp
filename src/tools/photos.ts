@@ -2,6 +2,7 @@ import { z } from 'zod';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import type { CompassClient } from '../client.js';
 import { textResult } from '../mcp.js';
+import { extractPidFromUrl } from '../url.js';
 import { fetchListingRecord, type RawListing } from './properties.js';
 
 /**
@@ -70,7 +71,7 @@ export function registerPhotosTools(
     {
       title: 'Get Compass property photo gallery',
       description:
-        "The full photo gallery for a Compass listing — every image in listing.media[]. Each entry returns the original CDN URL plus a thumbnail URL and pixel dimensions. Pass `url` — the full Compass homedetails URL or path (e.g. from a compass_search_properties result's `url` field). By default only photos (category 0) are returned; set `include_all_categories: true` to also include floorplans and other media. Returns `{ listing_id_sha, count, photos }`. `listing_id_sha` alone is NOT enough — Compass requires the address slug too and returns 410 Gone for the slug-less URL. Read-only; safe to call repeatedly.",
+        "The full photo gallery for a Compass listing — every image in listing.media[]. Each entry returns the original CDN URL plus a thumbnail URL and pixel dimensions. Pass either `url` (the full Compass homedetails URL or path) or `listing_id_sha` alone — sha-only calls are resolved internally via Compass site search. By default only photos (category 0) are returned; set `include_all_categories: true` to also include floorplans and other media. Returns `{ listing_id_sha, count, photos }`. Read-only; safe to call repeatedly.",
       annotations: {
         title: 'Get Compass property photo gallery',
         readOnlyHint: true,
@@ -82,13 +83,13 @@ export function registerPhotosTools(
           .string()
           .optional()
           .describe(
-            'Compass homedetails URL or path. Required — pass the `url` field from a compass_search_properties result.'
+            'Compass homedetails URL or path (preferred — no resolver round-trip needed).'
           ),
         listing_id_sha: z
           .string()
           .optional()
           .describe(
-            'The bare Compass listing identifier. INSUFFICIENT on its own — Compass returns 410 Gone for /homedetails/<sha>_lid/ without the address slug. Pass `url` instead.'
+            'Compass listing identifier. Sufficient on its own — the tool resolves the address slug internally via site search before fetching.'
           ),
         include_all_categories: z
           .boolean()
@@ -110,6 +111,10 @@ export function registerPhotosTools(
         .filter((p): p is FormattedPhoto => p !== null);
       return textResult({
         listing_id_sha: listing.listingIdSHA,
+        // `pid` is the stable short ID (from navigationPageLink's
+        // `_pid/` form) — survives re-listings; the `listing_id_sha`
+        // above does not. See issue #27.
+        pid: extractPidFromUrl(listing.navigationPageLink),
         url: listing.pageLink
           ? `https://www.compass.com${listing.pageLink}`
           : undefined,

@@ -111,6 +111,30 @@ describe('compass_get_price_history tool', () => {
     expect(parsed.history[0].price).toBe(937500);
   });
 
+  it('surfaces pid alongside listing_id_sha when navigationPageLink carries a _pid/ form', async () => {
+    mockFetchHtml.mockResolvedValueOnce(
+      `<html><script>window.__INITIAL_DATA__ = ${JSON.stringify({
+        props: {
+          listingRelation: {
+            listing: {
+              listingIdSHA: 'abc',
+              pageLink: '/homedetails/foo/abc_lid/',
+              navigationPageLink: '/homedetails/foo/203T5X_pid/',
+              events: [],
+              history: [],
+            },
+          },
+        },
+      })};</script></html>`
+    );
+    const r = await harness.callTool('compass_get_price_history', {
+      url: '/homedetails/foo/abc_lid/',
+    });
+    const parsed = parseToolResult<{ pid?: string; listing_id_sha: string }>(r);
+    expect(parsed.pid).toBe('203T5X');
+    expect(parsed.listing_id_sha).toBe('abc');
+  });
+
   it('returns empty arrays when the listing has no history', async () => {
     mockFetchHtml.mockResolvedValueOnce(htmlWith([], []));
     const r = await harness.callTool('compass_get_price_history', {

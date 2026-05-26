@@ -3,7 +3,7 @@ import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import type { CompassClient } from '../client.js';
 import { textResult } from '../mcp.js';
 import { extractUc } from '../page-state.js';
-import { locationToSlug } from '../url.js';
+import { extractPidFromUrl, locationToSlug } from '../url.js';
 
 /**
  * Compass's search results are server-rendered from
@@ -77,6 +77,15 @@ export interface RawSearchEntry {
 
 export interface FormattedHome {
   listing_id_sha: string;
+  /**
+   * Compass's opaque short ID — present when the listing carries a
+   * `navigationPageLink` in `<slug>/<pid>_pid/` form. The `_pid/` URL
+   * is **stable across re-listings**, while `_lid/` URLs are content-
+   * addressed by sha and go stale when a property is delisted/relisted.
+   * Prefer the pid for any long-lived reference (trackers, sheets,
+   * bookmarks); use the sha to fetch the *current* listing record.
+   */
+  pid?: string;
   url: string;
   property_url?: string;
   address?: string;
@@ -126,8 +135,10 @@ export function formatHome(entry: RawSearchEntry): FormattedHome | null {
   const cs = l.clusterSummary ?? {};
   const priceRange = cs.priceRange ?? [];
   const firstMedia = l.media?.[0];
+  const pid = extractPidFromUrl(l.navigationPageLink);
   return {
     listing_id_sha: l.listingIdSHA,
+    pid,
     url,
     property_url: propertyUrl,
     address: street,
@@ -217,7 +228,8 @@ export function registerSearchTools(
     {
       title: 'Search Compass listings',
       description:
-        "Search Compass listings by location (city, ZIP, neighborhood) and optional filters. Resolves free-text via slugification into Compass's URL routing, then fetches the SSR search-results page and extracts the embedded listings array. Returns each matching listing's address, price, beds/baths, sqft, primary photo URL, lat/lng, and the Compass homedetails URL. Read-only; safe to call repeatedly.",
+        "Search Compass listings by location (city, ZIP, neighborhood) and optional filters. Resolves free-text via slugification into Compass's URL routing, then fetches the SSR search-results page and extracts the embedded listings array. Returns each matching listing's address, price, beds/baths, sqft, primary photo URL, lat/lng, the Compass homedetails URL (`_lid/` form, content-addressed by `listing_id_sha`), and the stable `_pid/` URL via `property_url` and the surfaced `pid` field. " +
+        "USE `pid`/`_pid/` FOR LONG-LIVED REFERENCES (trackers, sheets, bookmarks) — sha-based `_lid/` URLs change when a property is delisted and relisted. Use the sha-based URL to fetch the current listing record. Read-only; safe to call repeatedly.",
       annotations: {
         title: 'Search Compass listings',
         readOnlyHint: true,
