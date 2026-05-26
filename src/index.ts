@@ -25,6 +25,7 @@ import { registerCompareTools } from './tools/compare.js';
 import { registerAffordabilityTools } from './tools/affordability.js';
 import { registerPhotosTools } from './tools/photos.js';
 import { registerHealthcheckTools } from './tools/healthcheck.js';
+import { registerByAddressTools } from './tools/by-address.js';
 
 const VERSION = '0.6.2'; // x-release-please-version
 
@@ -48,6 +49,7 @@ registerCompareTools(server, client);
 registerAffordabilityTools(server);
 registerPhotosTools(server, client);
 registerHealthcheckTools(server, client);
+registerByAddressTools(server, client);
 
 console.error(
   `[compass-mcp] v${VERSION} — WebSocket bridge via @fetchproxy/server on 127.0.0.1:${port ?? 37149}. ` +
