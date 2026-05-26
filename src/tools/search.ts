@@ -336,8 +336,13 @@ export function registerSearchTools(
 
         pagesFetched += 1;
         // If Compass returned fewer than a full page, the result set is
-        // exhausted — stop early even if we have not hit `limit`.
-        if (formattedPage.length < COMPASS_PAGE_SIZE) {
+        // exhausted — stop early even if we have not hit `limit`. Use
+        // the *raw* page size: `formattedPage` has already had entries
+        // without a `listingIdSHA` (cluster entries, "coming soon"
+        // stubs, etc.) filtered out by `formatHome`, so its length can
+        // drop below `COMPASS_PAGE_SIZE` even when Compass returned a
+        // full page.
+        if (raw.length < COMPASS_PAGE_SIZE) {
           shortPage = true;
           break;
         }

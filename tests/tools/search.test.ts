@@ -406,6 +406,53 @@ describe('compass_search_properties tool', () => {
     expect(parsed.next_offset).toBeUndefined();
   });
 
+  it('keeps paging when a full raw page has some entries filtered out by formatHome', async () => {
+    // Compass occasionally returns cluster entries / "coming soon" stubs
+    // that have no `listingIdSHA`; `formatHome` drops them. The
+    // exhaustion guard must look at the *raw* page size, not the
+    // filtered one — otherwise a partial-after-filter page on a full
+    // raw page would short-circuit and under-deliver results.
+    const page = (start: number, validCount: number, stubCount: number, total: number) => {
+      const valid = Array.from({ length: validCount }, (_, i) => ({
+        listing: { listingIdSHA: String(start + i), pageLink: `/h/${start + i}/` },
+      }));
+      const stubs = Array.from({ length: stubCount }, () => ({
+        listing: {}, // no listingIdSHA → filtered out by formatHome
+      }));
+      const uc = {
+        sharedReactAppProps: {
+          initialResults: {
+            lolResults: { totalItems: total, data: [...valid, ...stubs] },
+          },
+        },
+      };
+      return `<html><script>global.uc = ${JSON.stringify(uc)};</script></html>`;
+    };
+    // Page 1: 5 raw entries (4 valid + 1 stub). raw.length === PAGE_SIZE
+    // so we should NOT short-circuit — fetch page 2 too.
+    mockFetchHtml
+      .mockResolvedValueOnce(page(1, 4, 1, 10))
+      .mockResolvedValueOnce(page(5, 5, 0, 10));
+
+    const r = await harness.callTool('compass_search_properties', {
+      location: 'x',
+      limit: 9,
+    });
+    expect(r.isError).toBeFalsy();
+    expect(mockFetchHtml.mock.calls.map((c) => c[0])).toEqual([
+      '/homes-for-sale/x/',
+      '/homes-for-sale/x/page-2/',
+    ]);
+    const parsed = parseToolResult<{
+      count: number;
+      results: Array<{ listing_id_sha: string }>;
+    }>(r);
+    expect(parsed.count).toBe(9);
+    expect(parsed.results.map((x) => x.listing_id_sha)).toEqual([
+      '1', '2', '3', '4', '5', '6', '7', '8', '9',
+    ]);
+  });
+
   it('throws when uc can not be extracted from the HTML', async () => {
     mockFetchHtml.mockResolvedValueOnce('<html>no script here</html>');
     const r = await harness.callTool('compass_search_properties', {
