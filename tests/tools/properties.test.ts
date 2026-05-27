@@ -341,6 +341,50 @@ describe('compass_get_property tool', () => {
     expect(text).toMatch(/Could not locate __INITIAL_DATA__/);
   });
 
+  describe('listing_agent surfacing (issue #52)', () => {
+    const htmlWith = (listing: unknown) => {
+      const data = { props: { listingRelation: { listing } } };
+      return `<html><script>window.__INITIAL_DATA__ = ${JSON.stringify(data)};</script></html>`;
+    };
+
+    it('surfaces listing_agent { id, name } when agents[] is present', async () => {
+      mockFetchHtml.mockResolvedValueOnce(
+        htmlWith({
+          listingIdSHA: 'a',
+          pageLink: '/x/a_lid/',
+          // Compass typically surfaces agents on the listing record;
+          // the primary listing agent is the first entry.
+          agents: [
+            { id: 'agent-1', fullName: 'Jane Realtor', companyName: 'Compass NC' },
+            { id: 'agent-2', fullName: 'Co Agent', companyName: 'Compass NC' },
+          ],
+        })
+      );
+      const r = await harness.callTool('compass_get_property', {
+        url: '/x/a_lid/',
+      });
+      const parsed = parseToolResult<{
+        listing_agent?: { id?: string; name?: string; brokerage?: string };
+      }>(r);
+      expect(parsed.listing_agent).toEqual({
+        id: 'agent-1',
+        name: 'Jane Realtor',
+        brokerage: 'Compass NC',
+      });
+    });
+
+    it('omits listing_agent when no agents[] is present', async () => {
+      mockFetchHtml.mockResolvedValueOnce(
+        htmlWith({ listingIdSHA: 'a', pageLink: '/x/a_lid/' })
+      );
+      const r = await harness.callTool('compass_get_property', {
+        url: '/x/a_lid/',
+      });
+      const parsed = parseToolResult<{ listing_agent?: unknown }>(r);
+      expect(parsed.listing_agent).toBeUndefined();
+    });
+  });
+
   describe('P1 derived schema (issues #36, #37, #38, #43, #44)', () => {
     const htmlWith = (listing: unknown) => {
       const data = { props: { listingRelation: { listing } } };

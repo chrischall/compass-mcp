@@ -26,6 +26,10 @@ import { registerAffordabilityTools } from './tools/affordability.js';
 import { registerPhotosTools } from './tools/photos.js';
 import { registerHealthcheckTools } from './tools/healthcheck.js';
 import { registerByAddressTools } from './tools/by-address.js';
+import { registerBulkGetTools } from './tools/bulk-get.js';
+import { registerResolveAddressesTools } from './tools/resolve-addresses.js';
+import { registerSessionTools } from './tools/session.js';
+import { registerComparableRentalsTools } from './tools/comparable-rentals.js';
 
 const VERSION = '0.7.0'; // x-release-please-version
 
@@ -50,6 +54,10 @@ registerAffordabilityTools(server);
 registerPhotosTools(server, client);
 registerHealthcheckTools(server, client);
 registerByAddressTools(server, client);
+registerBulkGetTools(server, client);
+registerResolveAddressesTools(server, client);
+registerSessionTools(server, client);
+registerComparableRentalsTools(server, client);
 
 console.error(
   `[compass-mcp] v${VERSION} — WebSocket bridge via @fetchproxy/server on 127.0.0.1:${port ?? 37149}. ` +
