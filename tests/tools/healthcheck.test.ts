@@ -17,6 +17,7 @@ const DEFAULT_STATUS: BridgeStatus = {
   lastFailureAt: null,
   lastFailureReason: null,
   consecutiveFailures: 0,
+  lastExtensionMessageAt: null,
 };
 
 function stubClient(args: {
@@ -159,14 +160,17 @@ describe('compass_healthcheck tool', () => {
     expect(parsed.hint).toMatch(/never bound a role/);
   });
 
-  it('classifies a plain "fetchproxy transport error" as kind=transport', async () => {
+  it('classifies a bare FetchproxyProtocolError as kind=protocol (no_tab / domain_denied / etc.)', async () => {
+    // classifyBridgeError vocabulary: the base FetchproxyProtocolError
+    // (not a timeout / bridge_down / http subclass) maps to 'protocol'.
+    // Pre-0.8.0 this arm was labelled 'transport' in compass; 0.8.0
+    // standardises on 'protocol' across the cohort via the helper.
+    const { FetchproxyProtocolError } = await import('@fetchproxy/server');
     const client = stubClient({
       fetchHtml: vi
         .fn()
         .mockRejectedValue(
-          new Error(
-            'fetchproxy transport error after 12ms (role=host): extension offline'
-          )
+          new FetchproxyProtocolError('no_tab: extension offline')
         ),
     });
     harness = await createTestHarness((server) =>
@@ -175,7 +179,7 @@ describe('compass_healthcheck tool', () => {
     const r = await harness.callTool('compass_healthcheck', {});
     const parsed = parseToolResult<{ ok: boolean; error: { kind: string }; hint: string }>(r);
     expect(parsed.ok).toBe(false);
-    expect(parsed.error.kind).toBe('transport');
+    expect(parsed.error.kind).toBe('protocol');
     expect(parsed.hint).toMatch(/no compass\.com tab is open/i);
   });
 
@@ -236,6 +240,96 @@ describe('compass_healthcheck tool', () => {
     expect(parsed.bridge.last_failure_at).toBe(FAILURE_AT);
     expect(parsed.bridge.last_failure_reason).toMatch(/Could not establish/);
     expect(parsed.bridge.consecutive_failures).toBe(3);
+  });
+
+  it('surfaces last_extension_message_at on the bridge block (0.8.0 liveness signal)', async () => {
+    // 0.8.0 added bridgeHealth().lastExtensionMessageAt — wall-clock of
+    // the most recent inner frame from the extension, distinct from
+    // per-call success/failure. Surface it in the tool response so an
+    // operator can tell "extension still answering" from "this call
+    // failed".
+    const LAST_MSG = Date.parse('2026-05-25T03:39:46Z');
+    const client = stubClient({
+      status: { lastExtensionMessageAt: LAST_MSG },
+    });
+    harness = await createTestHarness((server) =>
+      registerHealthcheckTools(server, client)
+    );
+    const r = await harness.callTool('compass_healthcheck', {});
+    const parsed = parseToolResult<{
+      bridge: { last_extension_message_at: number | null };
+    }>(r);
+    expect(parsed.bridge.last_extension_message_at).toBe(LAST_MSG);
+  });
+
+  it('surfaces .hint from FetchproxyBridgeDownError as error.bridge_hint', async () => {
+    // 0.8.0 added `.hint` to FetchproxyBridgeDownError carrying the
+    // server's own actionable next-step (independent of compass's
+    // hint composition). Surface it through so the operator sees the
+    // exact text the bridge author intended.
+    const client = stubClient({
+      status: { role: 'host', port: 37149, serverVersion: '0.8.0' },
+      fetchHtml: vi.fn().mockRejectedValue(
+        new FetchproxyBridgeDownError({
+          url: 'https://www.compass.com/robots.txt',
+          retryAttempted: true,
+          role: 'host',
+          port: 37149,
+          originalError: 'Could not establish connection.',
+        })
+      ),
+    });
+    harness = await createTestHarness((server) =>
+      registerHealthcheckTools(server, client)
+    );
+    const r = await harness.callTool('compass_healthcheck', {});
+    const parsed = parseToolResult<{
+      error: { kind: string; bridge_hint?: string };
+    }>(r);
+    expect(parsed.error.kind).toBe('bridge_down');
+    expect(parsed.error.bridge_hint).toBeTruthy();
+    expect(typeof parsed.error.bridge_hint).toBe('string');
+    expect(parsed.error.bridge_hint!.length).toBeGreaterThan(0);
+  });
+
+  it('reads role/port/elapsed_ms directly off the typed error (0.8.0 fields)', async () => {
+    // 0.8.0 hangs role/port/elapsedMs on the typed error itself, so
+    // we don't have to consult bridgeStatus() to know where the
+    // failure happened. The healthcheck surface should use those.
+    // Probe a divergence case: simulate the status() snapshot drifting
+    // away from the role recorded on the error, and assert the
+    // response prefers the error's own role/port (the source of truth
+    // for THIS call).
+    const client = stubClient({
+      status: { role: null, port: 99999 }, // intentionally wrong
+      fetchHtml: vi.fn().mockRejectedValue(
+        new FetchproxyTimeoutError({
+          url: 'https://www.compass.com/robots.txt',
+          timeoutMs: 25,
+          elapsedMs: 27,
+          role: 'host',
+          port: 37149,
+        })
+      ),
+    });
+    harness = await createTestHarness((server) =>
+      registerHealthcheckTools(server, client)
+    );
+    const r = await harness.callTool('compass_healthcheck', {});
+    const parsed = parseToolResult<{
+      probe: { elapsed_ms: number };
+      error: {
+        kind: string;
+        role_at_failure: 'host' | 'peer' | null;
+        port_at_failure?: number;
+        elapsed_ms?: number;
+      };
+    }>(r);
+    expect(parsed.error.kind).toBe('timeout');
+    // Error's own role/port win when present (source of truth for this throw).
+    expect(parsed.error.role_at_failure).toBe('host');
+    expect(parsed.error.port_at_failure).toBe(37149);
+    expect(parsed.error.elapsed_ms).toBe(27);
   });
 
   it('classifies an unrelated error as kind=other', async () => {
