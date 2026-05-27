@@ -340,4 +340,71 @@ describe('compass_get_property tool', () => {
     const text = (r.content[0] as { text: string }).text;
     expect(text).toMatch(/Could not locate __INITIAL_DATA__/);
   });
+
+  describe('include_description + extracted_features (issues #34, #35)', () => {
+    const htmlWith = (listing: unknown) => {
+      const data = { props: { listingRelation: { listing } } };
+      return `<html><script>window.__INITIAL_DATA__ = ${JSON.stringify(data)};</script></html>`;
+    };
+
+    const richDescription =
+      'Lakefront retreat with a private dock, a hot tub on the deck, and an unfinished basement. Set in Rumbling Bald — sold fully furnished.';
+
+    it('omits raw description by default but populates extracted_features', async () => {
+      mockFetchHtml.mockResolvedValueOnce(
+        htmlWith({
+          listingIdSHA: 'abc',
+          pageLink: '/homedetails/foo/abc_lid/',
+          description: richDescription,
+          location: { prettyAddress: '1 Main' },
+        })
+      );
+      const r = await harness.callTool('compass_get_property', {
+        url: '/homedetails/foo/abc_lid/',
+      });
+      const parsed = parseToolResult<{
+        description?: string;
+        extracted_features?: {
+          lake_front: boolean;
+          hot_tub: boolean;
+          basement: string | null;
+          furnished: string | null;
+          dock: string | null;
+          community: string | null;
+        };
+      }>(r);
+      // Default behaviour: caller does not see the raw prose.
+      expect(parsed.description).toBeUndefined();
+      // But every structured signal is present.
+      expect(parsed.extracted_features).toEqual({
+        lake_front: true,
+        hot_tub: true,
+        basement: 'unfinished',
+        furnished: 'fully',
+        dock: 'private',
+        community: 'Rumbling Bald',
+      });
+    });
+
+    it('returns the raw description when include_description=true', async () => {
+      mockFetchHtml.mockResolvedValueOnce(
+        htmlWith({
+          listingIdSHA: 'abc',
+          pageLink: '/homedetails/foo/abc_lid/',
+          description: richDescription,
+          location: { prettyAddress: '1 Main' },
+        })
+      );
+      const r = await harness.callTool('compass_get_property', {
+        url: '/homedetails/foo/abc_lid/',
+        include_description: true,
+      });
+      const parsed = parseToolResult<{
+        description?: string;
+        extracted_features?: unknown;
+      }>(r);
+      expect(parsed.description).toBe(richDescription);
+      expect(parsed.extracted_features).toBeDefined();
+    });
+  });
 });
