@@ -341,6 +341,240 @@ describe('compass_get_property tool', () => {
     expect(text).toMatch(/Could not locate __INITIAL_DATA__/);
   });
 
+  describe('P1 derived schema (issues #36, #37, #38, #43, #44)', () => {
+    const htmlWith = (listing: unknown) => {
+      const data = { props: { listingRelation: { listing } } };
+      return `<html><script>window.__INITIAL_DATA__ = ${JSON.stringify(data)};</script></html>`;
+    };
+
+    it('emits portal_url_hyperlink in =HYPERLINK(_pid/) form when pid is present (#43)', async () => {
+      mockFetchHtml.mockResolvedValueOnce(
+        htmlWith({
+          listingIdSHA: 'abc',
+          pageLink: '/homedetails/foo/abc_lid/',
+          navigationPageLink: '/homedetails/foo/203T5X_pid/',
+        })
+      );
+      const r = await harness.callTool('compass_get_property', {
+        url: '/homedetails/foo/abc_lid/',
+      });
+      const parsed = parseToolResult<{ portal_url_hyperlink?: string }>(r);
+      expect(parsed.portal_url_hyperlink).toBe(
+        '=HYPERLINK("https://www.compass.com/homedetails/foo/203T5X_pid/","Compass")'
+      );
+    });
+
+    it('falls back to _lid/ in portal_url_hyperlink when no pid is available (#43)', async () => {
+      mockFetchHtml.mockResolvedValueOnce(
+        htmlWith({
+          listingIdSHA: 'abc',
+          pageLink: '/homedetails/foo/abc_lid/',
+        })
+      );
+      const r = await harness.callTool('compass_get_property', {
+        url: '/homedetails/foo/abc_lid/',
+      });
+      const parsed = parseToolResult<{ portal_url_hyperlink?: string }>(r);
+      expect(parsed.portal_url_hyperlink).toBe(
+        '=HYPERLINK("https://www.compass.com/homedetails/foo/abc_lid/","Compass")'
+      );
+    });
+
+    it('hoa_monthly_usd is null when no hoa data is present (#36)', async () => {
+      mockFetchHtml.mockResolvedValueOnce(
+        htmlWith({ listingIdSHA: 'abc', pageLink: '/x/abc_lid/' })
+      );
+      const r = await harness.callTool('compass_get_property', { url: '/x/abc_lid/' });
+      const parsed = parseToolResult<{ hoa_monthly_usd?: number | null }>(r);
+      expect(parsed.hoa_monthly_usd).toBeNull();
+    });
+
+    it('hoa_monthly_usd converts Annually → /12 rounded (#36)', async () => {
+      mockFetchHtml.mockResolvedValueOnce(
+        htmlWith({
+          listingIdSHA: 'abc',
+          pageLink: '/x/abc_lid/',
+          detailedInfo: {
+            associationFee: { amount: 4967, frequency: 'Annually' },
+          },
+        })
+      );
+      const r = await harness.callTool('compass_get_property', { url: '/x/abc_lid/' });
+      const parsed = parseToolResult<{ hoa_monthly_usd?: number }>(r);
+      expect(parsed.hoa_monthly_usd).toBe(414);
+    });
+
+    it('hoa_monthly_usd: Quarterly → /3, Monthly passthrough (#36)', async () => {
+      mockFetchHtml.mockResolvedValueOnce(
+        htmlWith({
+          listingIdSHA: 'a',
+          pageLink: '/x/a_lid/',
+          detailedInfo: {
+            associationFee: { amount: 900, frequency: 'Quarterly' },
+          },
+        })
+      );
+      const r1 = await harness.callTool('compass_get_property', { url: '/x/a_lid/' });
+      expect(parseToolResult<{ hoa_monthly_usd?: number }>(r1).hoa_monthly_usd).toBe(300);
+
+      mockFetchHtml.mockResolvedValueOnce(
+        htmlWith({
+          listingIdSHA: 'b',
+          pageLink: '/x/b_lid/',
+          detailedInfo: {
+            associationFee: { amount: 350, frequency: 'Monthly' },
+          },
+        })
+      );
+      const r2 = await harness.callTool('compass_get_property', { url: '/x/b_lid/' });
+      expect(parseToolResult<{ hoa_monthly_usd?: number }>(r2).hoa_monthly_usd).toBe(350);
+    });
+
+    it('hoa_monthly_usd is null for unknown frequencies (#36)', async () => {
+      mockFetchHtml.mockResolvedValueOnce(
+        htmlWith({
+          listingIdSHA: 'a',
+          pageLink: '/x/a_lid/',
+          detailedInfo: {
+            associationFee: { amount: 100, frequency: 'WhenMyDogBarks' },
+          },
+        })
+      );
+      const r = await harness.callTool('compass_get_property', { url: '/x/a_lid/' });
+      const parsed = parseToolResult<{ hoa_monthly_usd?: number | null }>(r);
+      expect(parsed.hoa_monthly_usd).toBeNull();
+    });
+
+    it('tax_annual nulls out the 0/1 not-yet-assessed sentinel (#38)', async () => {
+      mockFetchHtml.mockResolvedValueOnce(
+        htmlWith({
+          listingIdSHA: 'a',
+          pageLink: '/x/a_lid/',
+          detailedInfo: { taxAnnualAmount: 1 },
+        })
+      );
+      const r = await harness.callTool('compass_get_property', { url: '/x/a_lid/' });
+      const parsed = parseToolResult<{ tax_annual?: number | null }>(r);
+      expect(parsed.tax_annual).toBeNull();
+    });
+
+    it('tax_annual passes through normal values (#38)', async () => {
+      mockFetchHtml.mockResolvedValueOnce(
+        htmlWith({
+          listingIdSHA: 'a',
+          pageLink: '/x/a_lid/',
+          detailedInfo: { taxAnnualAmount: 8200 },
+        })
+      );
+      const r = await harness.callTool('compass_get_property', { url: '/x/a_lid/' });
+      const parsed = parseToolResult<{ tax_annual?: number | null }>(r);
+      expect(parsed.tax_annual).toBe(8200);
+    });
+
+    it('days_on_market derived from the earliest Listed event (#37)', async () => {
+      const tenDaysAgoMs = Date.now() - 10 * 86_400_000;
+      mockFetchHtml.mockResolvedValueOnce(
+        htmlWith({
+          listingIdSHA: 'a',
+          pageLink: '/x/a_lid/',
+          events: [
+            { timestamp: tenDaysAgoMs, status: 1, price: 500000, localizedStatus: 'Listed' },
+          ],
+        })
+      );
+      const r = await harness.callTool('compass_get_property', { url: '/x/a_lid/' });
+      const parsed = parseToolResult<{ days_on_market?: number | null }>(r);
+      expect(parsed.days_on_market).toBe(10);
+    });
+
+    it('days_on_market is null when no Listed event is present (#37)', async () => {
+      mockFetchHtml.mockResolvedValueOnce(
+        htmlWith({ listingIdSHA: 'a', pageLink: '/x/a_lid/' })
+      );
+      const r = await harness.callTool('compass_get_property', { url: '/x/a_lid/' });
+      const parsed = parseToolResult<{ days_on_market?: number | null }>(r);
+      expect(parsed.days_on_market).toBeNull();
+    });
+
+    it('price_drop_amount + price_drop_percent from event-derived previous list price (#37)', async () => {
+      mockFetchHtml.mockResolvedValueOnce(
+        htmlWith({
+          listingIdSHA: 'a',
+          pageLink: '/x/a_lid/',
+          price: { lastKnown: 480000 },
+          events: [
+            { timestamp: 1000, status: 1, price: 500000, localizedStatus: 'Listed' },
+          ],
+        })
+      );
+      const r = await harness.callTool('compass_get_property', { url: '/x/a_lid/' });
+      const parsed = parseToolResult<{
+        price_drop_amount?: number | null;
+        price_drop_percent?: number | null;
+      }>(r);
+      expect(parsed.price_drop_amount).toBe(20000);
+      expect(parsed.price_drop_percent).toBe(4.0);
+    });
+
+    it('price_drop_* are null when there is no prior list event (#37)', async () => {
+      mockFetchHtml.mockResolvedValueOnce(
+        htmlWith({
+          listingIdSHA: 'a',
+          pageLink: '/x/a_lid/',
+          price: { lastKnown: 480000 },
+        })
+      );
+      const r = await harness.callTool('compass_get_property', { url: '/x/a_lid/' });
+      const parsed = parseToolResult<{
+        price_drop_amount?: number | null;
+        price_drop_percent?: number | null;
+      }>(r);
+      expect(parsed.price_drop_amount).toBeNull();
+      expect(parsed.price_drop_percent).toBeNull();
+    });
+
+    it('address_alternates surfaces an alternate MLS address when it differs (#44)', async () => {
+      mockFetchHtml.mockResolvedValueOnce(
+        htmlWith({
+          listingIdSHA: 'a',
+          pageLink: '/x/a_lid/',
+          location: { prettyAddress: '169 Overlook Point Ln' },
+          mlsAlternateAddresses: ['109 Overlook Point Ln'],
+        })
+      );
+      const r = await harness.callTool('compass_get_property', { url: '/x/a_lid/' });
+      const parsed = parseToolResult<{ address_alternates?: string[] }>(r);
+      expect(parsed.address_alternates).toEqual(['109 Overlook Point Ln']);
+    });
+
+    it('address_alternates is omitted when no alternates exist (#44)', async () => {
+      mockFetchHtml.mockResolvedValueOnce(
+        htmlWith({
+          listingIdSHA: 'a',
+          pageLink: '/x/a_lid/',
+          location: { prettyAddress: '169 Overlook Point Ln' },
+        })
+      );
+      const r = await harness.callTool('compass_get_property', { url: '/x/a_lid/' });
+      const parsed = parseToolResult<{ address_alternates?: string[] }>(r);
+      expect(parsed.address_alternates).toBeUndefined();
+    });
+
+    it('address_alternates drops duplicates of the primary (#44)', async () => {
+      mockFetchHtml.mockResolvedValueOnce(
+        htmlWith({
+          listingIdSHA: 'a',
+          pageLink: '/x/a_lid/',
+          location: { prettyAddress: '169 Overlook Point Ln' },
+          mlsAlternateAddresses: ['169 OVERLOOK POINT LN.'],
+        })
+      );
+      const r = await harness.callTool('compass_get_property', { url: '/x/a_lid/' });
+      const parsed = parseToolResult<{ address_alternates?: string[] }>(r);
+      expect(parsed.address_alternates).toBeUndefined();
+    });
+  });
+
   describe('include_description + extracted_features (issues #34, #35)', () => {
     const htmlWith = (listing: unknown) => {
       const data = { props: { listingRelation: { listing } } };
