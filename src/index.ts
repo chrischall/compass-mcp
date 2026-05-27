@@ -27,7 +27,7 @@ import { registerPhotosTools } from './tools/photos.js';
 import { registerHealthcheckTools } from './tools/healthcheck.js';
 import { registerByAddressTools } from './tools/by-address.js';
 
-const VERSION = '0.6.2'; // x-release-please-version
+const VERSION = '0.7.0'; // x-release-please-version
 
 const port = process.env.COMPASS_WS_PORT
   ? Number(process.env.COMPASS_WS_PORT)

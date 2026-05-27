@@ -6,12 +6,12 @@
     "url": "https://github.com/chrischall/compass-mcp",
     "source": "github"
   },
-  "version": "0.6.2",
+  "version": "0.7.0",
   "packages": [
     {
       "registryType": "npm",
       "identifier": "compass-mcp",
-      "version": "0.6.2",
+      "version": "0.7.0",
       "transport": {
         "type": "stdio"
       },
