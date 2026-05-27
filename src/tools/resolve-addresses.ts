@@ -42,14 +42,10 @@ interface UnresolvedRow {
 type RowResult = ResolvedRow | UnresolvedRow;
 
 /**
- * Mirror of `addressMatchesQuery` from `compass_get_by_address` — kept
- * inline here so this tool ships independently. See by-address.ts for
- * the canonical match policy (lowercase + canonicalize street types +
- * substring/token check).
- *
- * Note: `compass_get_by_address` skips this check for single calls, but
- * bulk amplifies the corruption surface (#45), so each row must verify
- * independently.
+ * Address-match policy for the bulk resolver. `compass_get_by_address`
+ * skips this check for single calls, but bulk amplifies the corruption
+ * surface (#45), so each row must verify independently (lowercase +
+ * canonicalize street types + substring/token check).
  */
 const STREET_TYPE_CANON: Array<[RegExp, string]> = [
   [/\bboulevard\b/g, 'blvd'],
