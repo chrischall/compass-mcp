@@ -107,6 +107,35 @@ describe('buildEventsNormalized', () => {
     expect(out[0].price_change_pct).toBeUndefined();
   });
 
+  it('deduplicates events that appear in both events[] and history[] (same timestamp+type+price)', () => {
+    // Compass historically only includes prior-listing events in
+    // history[], but if it ever starts also surfacing the current
+    // listing's events there, we should collapse the overlap to one
+    // entry per (timestamp, type, price) tuple. Belt-and-suspenders.
+    const dup = {
+      timestamp: Date.parse('2024-01-01'),
+      price: 1000000,
+      localizedStatus: 'Listed',
+      source: { sourceDisplayName: 'MLSLI' },
+    };
+    const out = buildEventsNormalized([dup], [dup]);
+    expect(out).toHaveLength(1);
+    expect(out[0].type).toBe('Listed');
+    expect(out[0].price).toBe(1000000);
+  });
+
+  it('does not dedup distinct same-day events with different types', () => {
+    const ts = Date.parse('2024-01-01');
+    const out = buildEventsNormalized(
+      [
+        { timestamp: ts, price: 1000000, localizedStatus: 'Listed' },
+        { timestamp: ts, price: 1000000, localizedStatus: 'Price Change' },
+      ],
+      []
+    );
+    expect(out).toHaveLength(2);
+  });
+
   it('drops events whose status does not normalize to a known enum', () => {
     const out = buildEventsNormalized(
       [
