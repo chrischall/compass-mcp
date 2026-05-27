@@ -68,12 +68,14 @@ export function registerComparableRentalsTools(
         listing_id_sha,
       });
       const loc = listing.location ?? {};
-      // Prefer ZIP for narrow scoping; fall back to "city state".
+      // Prefer ZIP for narrow scoping; fall back to "city, state", then
+      // to `prettyAddress`. We use `||` between the first two fallbacks
+      // because `[...].join(', ')` returns `''` (not nullish) when both
+      // fields are missing — `??` would stop on `''` and the
+      // `prettyAddress` branch would be dead code.
+      const cityState = [loc.city, loc.state].filter(Boolean).join(', ');
       const locationSeed =
-        loc.zipCode ??
-        [loc.city, loc.state].filter(Boolean).join(', ') ??
-        loc.prettyAddress ??
-        '';
+        loc.zipCode ?? (cityState || loc.prettyAddress) ?? '';
       if (!locationSeed) {
         return textResult({
           target: {

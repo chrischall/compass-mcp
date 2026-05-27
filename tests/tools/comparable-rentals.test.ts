@@ -92,6 +92,39 @@ describe('compass_get_comparable_rentals', () => {
     expect(searchPath).toContain('type-rental');
   });
 
+  it('uses prettyAddress as the search seed when zip and city/state are absent', async () => {
+    // This guards the operator-precedence fix in the locationSeed
+    // chain. `[city, state].filter(...).join(', ')` returns '' when
+    // both are missing — `??` would stop on the empty string and the
+    // `prettyAddress` branch would be unreachable. We need `||` between
+    // the join result and `prettyAddress`.
+    mockFetchHtml.mockImplementation(async (path: string) => {
+      if (path.includes('_lid')) {
+        return homedetailsHtml({
+          listingIdSHA: 'target',
+          pageLink: '/h/target_lid/',
+          location: {
+            prettyAddress: '126 Sleeping Bear Ln',
+            // No city, state, or zip — only prettyAddress is present.
+          },
+        });
+      }
+      return rentalSearchHtml([]);
+    });
+    const r = await harness.callTool('compass_get_comparable_rentals', {
+      url: '/h/target_lid/',
+    });
+    const parsed = parseToolResult<{ count: number; warning?: string }>(r);
+    // Tool should have proceeded to the rental search (count is 0
+    // because we returned no rentals), NOT short-circuited with the
+    // 'no locality data' warning.
+    expect(parsed.warning).toBeUndefined();
+    expect(parsed.count).toBe(0);
+    // Confirm the search URL was actually fetched (i.e. we used the
+    // prettyAddress as the seed).
+    expect(mockFetchHtml.mock.calls.length).toBe(2);
+  });
+
   it('returns an empty rentals[] when the target has no matching area', async () => {
     mockFetchHtml.mockImplementation(async (path: string) => {
       if (path.includes('_lid')) {
