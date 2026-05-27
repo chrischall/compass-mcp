@@ -453,6 +453,45 @@ describe('compass_search_properties tool', () => {
     ]);
   });
 
+  it('honors the MAX_PAGES safety cap and exposes next_offset (#47)', async () => {
+    // Fill every page Compass returns so the loop is bound by MAX_PAGES,
+    // not by exhaustion or by `limit`. Asserts the documented cap.
+    let counter = 0;
+    mockFetchHtml.mockImplementation(async () => {
+      // Emit a high totalItems so the loop doesn't bail on exhaustion
+      // before MAX_PAGES; emit COMPASS_PAGE_SIZE entries per page with
+      // unique shas so dedup / short-page detection don't short-circuit.
+      const listings = Array.from({ length: 5 }, () => ({
+        listing: {
+          listingIdSHA: `id-${counter++}`,
+          pageLink: `/h/${counter}/`,
+        },
+      }));
+      const uc = {
+        sharedReactAppProps: {
+          initialResults: {
+            lolResults: { totalItems: 10_000, data: listings },
+          },
+        },
+      };
+      return `<html><script>global.uc = ${JSON.stringify(uc)};</script></html>`;
+    });
+    const r = await harness.callTool('compass_search_properties', {
+      location: 'big-market',
+      limit: 10_000, // huge — forces the cap to bind
+    });
+    const parsed = parseToolResult<{
+      count: number;
+      offset: number;
+      next_offset?: number;
+    }>(r);
+    // 50 pages * 5 per page = 250 — the documented upper bound.
+    expect(parsed.count).toBe(250);
+    expect(mockFetchHtml.mock.calls.length).toBe(50);
+    // next_offset is present because the last synthesized page was full.
+    expect(parsed.next_offset).toBe(250);
+  });
+
   it('throws when uc can not be extracted from the HTML', async () => {
     mockFetchHtml.mockResolvedValueOnce('<html>no script here</html>');
     const r = await harness.callTool('compass_search_properties', {

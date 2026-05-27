@@ -138,11 +138,33 @@ export interface FetchproxyTransportOptions {
   version: string;
   /** Per-request timeout in ms. Default 30s. */
   fetchTimeoutMs?: number;
+  /**
+   * When the bridge returns a service-worker-eviction error (Chrome
+   * evicts extension service workers after ~30s idle), wait this many
+   * ms then retry once before surfacing the error. Issue #50 — the
+   * real-world workflow blocked entirely because the extension icon
+   * had to be clicked to wake the worker. The retry gives Chrome time
+   * to wake the worker organically (most extensions revive when an
+   * inbound message arrives during the eviction grace period).
+   *
+   * Default 2000 ms. Set to a negative number to disable the
+   * lazy-revive retry entirely. A value of 0 enables an immediate
+   * retry (useful in tests).
+   */
+  bridgeDownRetryDelayMs?: number;
 }
+
+/**
+ * Default delay before lazy-revive retry on a service-worker-eviction
+ * bridge_down. 2s gives Chrome time to wake the worker via the same
+ * inbound message that just failed.
+ */
+const DEFAULT_BRIDGE_DOWN_RETRY_DELAY_MS = 2_000;
 
 export class FetchproxyTransport implements CompassTransport {
   private readonly inner: FetchproxyServer;
   private readonly fetchTimeoutMs: number;
+  private readonly bridgeDownRetryDelayMs: number;
   private readonly port: number;
   private readonly serverVersion: string;
   // Freshness counters surfaced through `status()` so `compass_healthcheck`
@@ -165,6 +187,8 @@ export class FetchproxyTransport implements CompassTransport {
     };
     this.inner = new FetchproxyServer(options);
     this.fetchTimeoutMs = opts.fetchTimeoutMs ?? DEFAULT_FETCH_TIMEOUT_MS;
+    this.bridgeDownRetryDelayMs =
+      opts.bridgeDownRetryDelayMs ?? DEFAULT_BRIDGE_DOWN_RETRY_DELAY_MS;
   }
 
   async start(): Promise<void> {
@@ -212,6 +236,31 @@ export class FetchproxyTransport implements CompassTransport {
   }
 
   async fetch(init: FetchInit): Promise<FetchResult> {
+    // Try once; on a SW-eviction bridge_down, wait `bridgeDownRetryDelayMs`
+    // and try once more. Issue #50 — the second attempt commonly succeeds
+    // because the original inbound message wakes Chrome's evicted service
+    // worker; the retry rides the now-live worker.
+    try {
+      return await this.attemptFetch(init);
+    } catch (e) {
+      if (
+        e instanceof FetchproxyBridgeDownError &&
+        this.bridgeDownRetryDelayMs >= 0
+      ) {
+        log('fetch:bridge-down-retry-after-delay', {
+          delayMs: this.bridgeDownRetryDelayMs,
+          url: e.url,
+        });
+        if (this.bridgeDownRetryDelayMs > 0) {
+          await new Promise((r) => setTimeout(r, this.bridgeDownRetryDelayMs));
+        }
+        return await this.attemptFetch(init);
+      }
+      throw e;
+    }
+  }
+
+  private async attemptFetch(init: FetchInit): Promise<FetchResult> {
     const url = init.path.startsWith('http')
       ? init.path
       : `${COMPASS_ORIGIN}${init.path}`;
@@ -262,13 +311,6 @@ export class FetchproxyTransport implements CompassTransport {
     if (!result.ok) {
       log('fetch:bridge-error', { url, elapsed, error: result.error });
       this.recordFailure(result.error);
-      // @fetchproxy/server 0.5.0+ classifies the extension-side error
-      // into a discriminated `kind` (`'content_script_unreachable'`,
-      // `'no_tab'`, `'tab_fetch_failed'`, …). We surface the SW-
-      // unreachable case as a typed FetchproxyBridgeDownError so
-      // callers + compass_healthcheck can give actionable hints.
-      // Earlier compass-mcp versions did string-regex matching on the
-      // raw error; the kind field is the source of truth as of 0.5.0.
       if (result.kind === 'content_script_unreachable') {
         throw new FetchproxyBridgeDownError({
           url,

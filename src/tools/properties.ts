@@ -5,6 +5,11 @@ import { textResult } from '../mcp.js';
 import { extractInitialData, extractUc } from '../page-state.js';
 import { extractPidFromUrl, urlToPath } from '../url.js';
 import { findLolResults } from './search.js';
+import {
+  extractFeatures,
+  loadCommunities,
+  type ExtractedFeatures,
+} from '../features.js';
 
 /**
  * Compass homedetails: GET /homedetails/<slug>/<listingIdSHA>_lid/
@@ -68,6 +73,38 @@ export interface RawSchool {
   types?: string[];
 }
 
+/**
+ * Listing-side agent record. Compass surfaces these on the listing
+ * page (the agent panel under the photo carousel). We lift the
+ * primary (first) agent's id + name + brokerage onto the formatted
+ * record. (Issue #52.)
+ */
+export interface RawListingAgent {
+  id?: string;
+  fullName?: string;
+  firstName?: string;
+  lastName?: string;
+  companyName?: string;
+  email?: string;
+  phone?: string;
+}
+
+/**
+ * Annual property tax in Compass's payload. Some new-construction
+ * listings carry sentinel placeholders (`0` or `1`) for not-yet-assessed
+ * values — the formatter nulls those out so callers don't treat $1 as
+ * a real tax bill. (Issue #38.)
+ */
+export interface RawAssociationFee {
+  amount?: number;
+  /**
+   * `Monthly | Annually | Quarterly | SemiAnnually | Weekly`. Anything
+   * else maps to `hoa_monthly_usd: null` with a stderr warn so unknown
+   * shapes don't silently get treated as monthly. (Issue #36.)
+   */
+  frequency?: string;
+}
+
 export interface RawDetailedInfo {
   amenities?: string[];
   schools?: RawSchool[];
@@ -76,6 +113,10 @@ export interface RawDetailedInfo {
   view?: string;
   architecturalStyle?: string;
   garageSpaces?: number;
+  /** Annual property tax in USD. See sentinel-value cleanup, issue #38. */
+  taxAnnualAmount?: number;
+  /** HOA-fee bundle. Drives `hoa_monthly_usd` normalization. (Issue #36.) */
+  associationFee?: RawAssociationFee;
 }
 
 /** Subset of media used to type-check photo/history tools; full shapes live alongside their tools. */
@@ -128,6 +169,18 @@ export interface RawListing {
   media?: RawListingMediaItem[];
   events?: RawListingHistoryEvent[];
   history?: RawListingHistoryEvent[];
+  /**
+   * Alternate addresses from MLS feeds — surfaced as `address_alternates`
+   * when they disagree with `location.prettyAddress`. Real-world example:
+   * "109 vs 169 Overlook Point Ln" between Compass and Canopy MLS for
+   * the same listing. (Issue #44.)
+   */
+  mlsAlternateAddresses?: string[];
+  /**
+   * Listing agents in priority order — first is the primary. Surfaced
+   * on `FormattedProperty.listing_agent`. (Issue #52.)
+   */
+  agents?: RawListingAgent[];
 }
 
 export interface FormattedProperty {
@@ -142,6 +195,14 @@ export interface FormattedProperty {
    * listing record.
    */
   pid?: string;
+  /**
+   * Sheets-paste-ready hyperlink formula pointing at the same listing.
+   * Always present (mirrors `url`). Pasting into Google Sheets renders
+   * as a clickable "Compass" link. Uses the stable `_pid/` URL form
+   * when a `pid` is available; otherwise falls back to `_lid/`.
+   * (Issue #43.)
+   */
+  portal_url_hyperlink: string;
   compass_property_id?: number;
   url: string;
   property_url?: string;
@@ -150,6 +211,12 @@ export interface FormattedProperty {
   mls_status?: string;
   is_off_mls?: boolean;
   address?: string;
+  /**
+   * Alternate addresses surfaced by other MLS feeds when they disagree
+   * with the primary `address`. Omitted when no alternates are present
+   * (or when all alternates normalize to the primary). (Issue #44.)
+   */
+  address_alternates?: string[];
   city?: string;
   state?: string;
   zip?: string;
@@ -163,6 +230,34 @@ export interface FormattedProperty {
   last_asking?: number;
   price_per_sqft?: number;
   monthly_charges?: number;
+  /**
+   * Derived from `events[]` — `previous_list_price - current_price`
+   * when both are known. `null` when there's no prior list event.
+   * (Issue #37.)
+   */
+  price_drop_amount?: number | null;
+  /**
+   * `(previous - current) / previous * 100`, rounded to 0.1. `null`
+   * when either side is missing. (Issue #37.)
+   */
+  price_drop_percent?: number | null;
+  /**
+   * Days since the earliest "Listed" event timestamp. `null` when no
+   * such event is present. (Issue #37.)
+   */
+  days_on_market?: number | null;
+  /**
+   * Annual property tax. Nulled out for the 0/1 not-yet-assessed
+   * sentinel that Compass surfaces on some new-construction listings.
+   * (Issue #38.)
+   */
+  tax_annual?: number | null;
+  /**
+   * HOA fee normalized to monthly USD, rounded to the nearest dollar.
+   * `null` for unknown frequencies or when no fee is reported.
+   * (Issue #36.)
+   */
+  hoa_monthly_usd?: number | null;
   beds?: number;
   baths?: number;
   full_baths?: number;
@@ -171,7 +266,20 @@ export interface FormattedProperty {
   lot_size_sqft?: number;
   lot_size_formatted?: string;
   rooms?: number;
+  /**
+   * Raw `listing.description` (Compass-side marketing copy). Omitted
+   * by default — callers usually keyword-parse and discard it; the
+   * server-side `extracted_features` block covers the common needs.
+   * Pass `include_description: true` on the tool input to keep it.
+   * (Issue #34.)
+   */
   description?: string;
+  /**
+   * Structured keyword signals lifted from the raw description. Always
+   * populated when the listing has any description text at all.
+   * (Issue #35.)
+   */
+  extracted_features?: ExtractedFeatures;
   amenities?: string[];
   parcel_number?: string;
   architectural_style?: string;
@@ -188,6 +296,19 @@ export interface FormattedProperty {
     great_schools_rating?: number;
     types?: string[];
   }>;
+  /**
+   * Primary listing agent (first entry in the upstream `agents[]`).
+   * Omitted when no agents are present. (Issue #52.) The full inline
+   * agent-history block called out in #52 isn't implemented here —
+   * Compass doesn't expose the agent's other listings on the
+   * homedetails record; surfacing the agent id is the minimal honest
+   * step until that data path is plumbed.
+   */
+  listing_agent?: {
+    id?: string;
+    name?: string;
+    brokerage?: string;
+  };
 }
 
 interface ListingRelation {
@@ -300,7 +421,161 @@ export async function fetchListingRecord(
   return { listing, path };
 }
 
-export function format(listing: RawListing): FormattedProperty {
+export interface FormatOptions {
+  /**
+   * Include the raw `description` in the output. Defaults to `false`
+   * because callers usually only need the structured `extracted_features`
+   * block (which is always populated when description text exists).
+   * (Issue #34.)
+   */
+  includeDescription?: boolean;
+}
+
+/**
+ * Compose the Sheets-paste-ready `=HYPERLINK(...)` formula for a
+ * Compass listing. Prefers the stable `_pid/` form when a pid is
+ * available; falls back to `_lid/`. Always returns a valid formula
+ * string — callers shouldn't have to special-case the cell.
+ * (Issue #43.)
+ */
+export function buildPortalUrlHyperlink(args: {
+  pid?: string;
+  navigationPageLink?: string;
+  pageLink?: string;
+  listingIdSHA?: string;
+}): string {
+  const pidUrl = args.navigationPageLink
+    ? `https://www.compass.com${args.navigationPageLink}`
+    : undefined;
+  const lidUrl = args.pageLink
+    ? `https://www.compass.com${args.pageLink}`
+    : `https://www.compass.com/homedetails/${args.listingIdSHA ?? ''}_lid/`;
+  const target = args.pid ? (pidUrl ?? lidUrl) : lidUrl;
+  return `=HYPERLINK("${target}","Compass")`;
+}
+
+/**
+ * Convert an HOA `{amount, frequency}` to monthly USD, rounded to the
+ * nearest dollar. Returns `null` for unknown frequency strings (with a
+ * stderr warning so misclassification is visible) or when the inputs
+ * are absent. (Issue #36.)
+ */
+export function hoaToMonthlyUsd(
+  amount: number | undefined,
+  frequency: string | undefined
+): number | null {
+  if (typeof amount !== 'number' || !frequency) return null;
+  let monthly: number;
+  switch (frequency) {
+    case 'Monthly':
+      monthly = amount;
+      break;
+    case 'Annually':
+      monthly = amount / 12;
+      break;
+    case 'Quarterly':
+      monthly = amount / 3;
+      break;
+    case 'SemiAnnually':
+      monthly = amount / 6;
+      break;
+    case 'Weekly':
+      monthly = (amount * 52) / 12;
+      break;
+    default:
+      console.error(
+        `[compass-mcp] hoa_monthly_usd: unknown frequency "${frequency}" — returning null`
+      );
+      return null;
+  }
+  return Math.round(monthly);
+}
+
+/**
+ * Null out the 0/1 not-yet-assessed sentinel that Compass surfaces on
+ * some new-construction listings. (Issue #38.)
+ */
+export function sanitizeTaxAnnual(raw: number | undefined): number | null {
+  if (typeof raw !== 'number') return null;
+  // Real-world: $1 is a not-yet-assessed placeholder for new
+  // construction; $0 is the same placeholder under a different MLS
+  // feed's convention. Null both.
+  if (raw <= 1) return null;
+  return raw;
+}
+
+/**
+ * Earliest "Listed" event from a Compass events[] array. We treat
+ * `status === 1` AND/OR `localizedStatus === 'Listed'` as the listed
+ * signal — Compass's numeric statuses include both 'Listed' and various
+ * relisting / contract-fallthrough variants. Returns undefined when
+ * nothing qualifies.
+ */
+function earliestListedEvent(
+  events: RawListingHistoryEvent[] | undefined
+): RawListingHistoryEvent | undefined {
+  if (!events || events.length === 0) return undefined;
+  const listed = events.filter(
+    (e) =>
+      e.status === 1 ||
+      (e.localizedStatus && /^listed$/i.test(e.localizedStatus))
+  );
+  if (listed.length === 0) return undefined;
+  return listed.reduce((earliest, e) =>
+    (e.timestamp ?? Infinity) < (earliest.timestamp ?? Infinity) ? e : earliest
+  );
+}
+
+/**
+ * Days between `ms` (a unix-ms timestamp) and now, floored. Returns
+ * null if the timestamp is missing.
+ */
+function daysSinceMs(ms: number | undefined): number | null {
+  if (typeof ms !== 'number') return null;
+  const delta = Date.now() - ms;
+  if (!Number.isFinite(delta)) return null;
+  return Math.floor(delta / 86_400_000);
+}
+
+/**
+ * Normalize an address for equality checks — collapse whitespace, drop
+ * punctuation, lowercase. Used to dedupe `address_alternates` against
+ * the primary `address`.
+ */
+function normalizeAddressForCompare(s: string | undefined): string {
+  if (!s) return '';
+  return s.toLowerCase().replace(/[,#.]/g, '').replace(/\s+/g, ' ').trim();
+}
+
+/**
+ * Collect alternate-address strings, excluding any that normalize to
+ * the primary. Returns an empty array when nothing distinct surfaces.
+ * (Issue #44.)
+ */
+export function collectAddressAlternates(
+  primary: string | undefined,
+  raw: RawListing
+): string[] {
+  const primaryNorm = normalizeAddressForCompare(primary);
+  const candidates: string[] = [];
+  for (const c of raw.mlsAlternateAddresses ?? []) {
+    if (typeof c === 'string' && c.trim()) candidates.push(c.trim());
+  }
+  const seen = new Set<string>();
+  const alternates: string[] = [];
+  for (const candidate of candidates) {
+    const norm = normalizeAddressForCompare(candidate);
+    if (!norm || norm === primaryNorm || seen.has(norm)) continue;
+    seen.add(norm);
+    alternates.push(candidate);
+  }
+  return alternates;
+}
+
+export function format(
+  listing: RawListing,
+  opts: FormatOptions = {}
+): FormattedProperty {
   const loc = listing.location ?? {};
   const size = listing.size ?? {};
   const price = listing.price ?? {};
@@ -315,9 +590,62 @@ export function format(listing: RawListing): FormattedProperty {
     ? `https://www.compass.com${listing.navigationPageLink}`
     : undefined;
   const pid = extractPidFromUrl(listing.navigationPageLink);
+  // Pre-compute extracted_features (cheap) whenever a description is
+  // present, so callers can drop the raw prose. (Issue #35.) The raw
+  // description itself is opt-in via FormatOptions.includeDescription
+  // — see Issue #34 for the context-savings rationale.
+  const extractedFeatures: ExtractedFeatures | undefined = listing.description
+    ? extractFeatures(listing.description, loadCommunities())
+    : undefined;
+  // Derived fields (issues #36–#38, #43, #44). Each helper is pure and
+  // unit-tested; the return shape below stays declarative.
+  const portalUrlHyperlink = buildPortalUrlHyperlink({
+    pid,
+    navigationPageLink: listing.navigationPageLink,
+    pageLink: listing.pageLink,
+    listingIdSHA: listing.listingIdSHA,
+  });
+  const hoaMonthlyUsd = hoaToMonthlyUsd(
+    dInfo.associationFee?.amount,
+    dInfo.associationFee?.frequency
+  );
+  const taxAnnual = sanitizeTaxAnnual(dInfo.taxAnnualAmount);
+  // price_drop_* + days_on_market: derive from the events[] trail.
+  const listedEvent = earliestListedEvent(listing.events);
+  const previousListPrice = listedEvent?.price;
+  const currentPrice = price.lastKnown;
+  let priceDropAmount: number | null = null;
+  let priceDropPercent: number | null = null;
+  if (
+    typeof previousListPrice === 'number' &&
+    typeof currentPrice === 'number' &&
+    previousListPrice > 0 &&
+    previousListPrice !== currentPrice
+  ) {
+    const drop = previousListPrice - currentPrice;
+    priceDropAmount = drop;
+    priceDropPercent = Math.round((drop / previousListPrice) * 1000) / 10;
+  }
+  const daysOnMarket = daysSinceMs(listedEvent?.timestamp);
+  const alternates = collectAddressAlternates(loc.prettyAddress, listing);
+  // Primary listing agent (issue #52). Compass surfaces multiple agents
+  // sometimes; the first entry is the listing agent.
+  const primaryAgent = listing.agents?.[0];
+  let listingAgent: FormattedProperty['listing_agent'];
+  if (primaryAgent) {
+    const composedName =
+      [primaryAgent.firstName, primaryAgent.lastName].filter(Boolean).join(' ') ||
+      undefined;
+    listingAgent = {
+      id: primaryAgent.id,
+      name: primaryAgent.fullName ?? composedName,
+      brokerage: primaryAgent.companyName,
+    };
+  }
   return {
     listing_id_sha: listing.listingIdSHA,
     pid,
+    portal_url_hyperlink: portalUrlHyperlink,
     compass_property_id: listing.compassPropertyId,
     url,
     property_url: propertyUrl,
@@ -326,6 +654,7 @@ export function format(listing: RawListing): FormattedProperty {
     mls_status: listing.mlsStatus,
     is_off_mls: listing.isOffMLS,
     address: loc.prettyAddress,
+    address_alternates: alternates.length > 0 ? alternates : undefined,
     city: loc.city,
     state: loc.state,
     zip: loc.zipCode,
@@ -339,6 +668,11 @@ export function format(listing: RawListing): FormattedProperty {
     last_asking: price.lastAsking,
     price_per_sqft: price.perSquareFoot,
     monthly_charges: price.monthlySalesChargesInclTaxes,
+    price_drop_amount: priceDropAmount,
+    price_drop_percent: priceDropPercent,
+    days_on_market: daysOnMarket,
+    tax_annual: taxAnnual,
+    hoa_monthly_usd: hoaMonthlyUsd,
     beds: size.bedrooms,
     baths: size.totalBathrooms ?? size.bathrooms,
     full_baths: size.fullBathrooms,
@@ -347,7 +681,10 @@ export function format(listing: RawListing): FormattedProperty {
     lot_size_sqft: size.lotSizeInSquareFeet,
     lot_size_formatted: size.formattedLotSize,
     rooms: size.totalRooms,
-    description: listing.description,
+    // description is opt-in via FormatOptions; extracted_features is
+    // always present when there's any description text to pull from.
+    description: opts.includeDescription ? listing.description : undefined,
+    extracted_features: extractedFeatures,
     amenities: dInfo.amenities,
     parcel_number: listing.parcelNumber,
     architectural_style: dInfo.architecturalStyle,
@@ -364,6 +701,7 @@ export function format(listing: RawListing): FormattedProperty {
       great_schools_rating: s.greatSchoolsRating,
       types: s.types,
     })),
+    listing_agent: listingAgent,
   };
 }
 
@@ -376,7 +714,8 @@ export function registerPropertyTools(
     {
       title: 'Get Compass property details',
       description:
-        "Fetch a property's full Compass record. Pass either `url` (a full Compass homedetails URL or path from a compass_search_properties result) or `listing_id_sha` alone — when only the sha is supplied, the tool resolves the canonical /homedetails/<slug>/<sha>_lid/ path internally via Compass site search. Returns address, neighborhood, beds/baths, sqft, price + price-per-sqft, monthly charges, MLS status, amenities, schools, parcel number, and the canonical Compass URL.\n\n" +
+        "Fetch a property's full Compass record. Pass either `url` (a full Compass homedetails URL or path from a compass_search_properties result) or `listing_id_sha` alone — when only the sha is supplied, the tool resolves the canonical /homedetails/<slug>/<sha>_lid/ path internally via Compass site search. Returns address, neighborhood, beds/baths, sqft, price + price-per-sqft, monthly charges, MLS status, amenities, schools, parcel number, and the canonical Compass URL. Also returns `extracted_features` (lake_front, hot_tub, basement, furnished, dock, community) keyword-parsed from the description.\n\n" +
+        "DESCRIPTION HANDLING: The raw `description` (Compass marketing copy) is omitted by default — pass `include_description: true` to keep it. `extracted_features` is always populated and usually sufficient.\n\n" +
         "URL FORMS: Compass exposes two URL shapes for a listing. `_lid/` (content-addressed by `listing_id_sha`) — what this tool fetches and what `url` returns — is the form to use for reading the current listing record. `_pid/` (opaque short ID, in `property_url` and the surfaced `pid` field) is **stable across re-listings** and is the right choice for any long-lived reference (trackers, sheets, bookmarks); sha-based URLs go stale when a property is delisted and relisted. Read-only; safe to call repeatedly.",
       annotations: {
         title: 'Get Compass property details',
@@ -397,14 +736,22 @@ export function registerPropertyTools(
           .describe(
             'Compass listing identifier (the SHA inside `<sha>_lid`). Sufficient on its own — the tool will resolve the address slug internally via Compass site search before fetching the homedetails page (one extra HTTP round-trip).'
           ),
+        include_description: z
+          .boolean()
+          .optional()
+          .describe(
+            'Include the raw `description` (Compass marketing copy) in the response. Defaults to `false` — `extracted_features` is always populated and usually covers the common needs.'
+          ),
       },
     },
-    async ({ url, listing_id_sha }) => {
+    async ({ url, listing_id_sha, include_description }) => {
       const { listing } = await fetchListingRecord(client, {
         url,
         listing_id_sha,
       });
-      return textResult(format(listing));
+      return textResult(
+        format(listing, { includeDescription: include_description })
+      );
     }
   );
 }

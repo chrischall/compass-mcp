@@ -125,6 +125,84 @@ describe('compass_compare_properties tool', () => {
     expect(parsed.results[1].error).toBeUndefined();
   });
 
+  it('omits summary by default — opt-in via include_summary (#39)', async () => {
+    let n = 0;
+    mockFetchHtml.mockImplementation(async () => {
+      n++;
+      return htmlWith({
+        listingIdSHA: `id-${n}`,
+        pageLink: `/h/${n}/`,
+        location: { prettyAddress: `${n} Main` },
+        price: { lastKnown: n * 100_000 },
+      });
+    });
+    const r = await harness.callTool('compass_compare_properties', {
+      targets: [
+        { url: '/homedetails/foo/a_lid/' },
+        { url: '/homedetails/foo/b_lid/' },
+      ],
+    });
+    const parsed = parseToolResult<{ summary?: unknown; results: unknown[] }>(r);
+    // Default behaviour: no summary. The pivoted table is redundant
+    // with rows[].property.* and was ~30% of response weight per the
+    // cross-MCP report — opt-in only.
+    expect(parsed.summary).toBeUndefined();
+    expect(parsed.results).toHaveLength(2);
+  });
+
+  it('returns summary when include_summary=true (#39)', async () => {
+    let n = 0;
+    mockFetchHtml.mockImplementation(async () => {
+      n++;
+      return htmlWith({
+        listingIdSHA: `id-${n}`,
+        pageLink: `/h/${n}/`,
+        location: { prettyAddress: `${n} Main` },
+        price: { lastKnown: n * 100_000 },
+      });
+    });
+    const r = await harness.callTool('compass_compare_properties', {
+      targets: [
+        { url: '/homedetails/foo/a_lid/' },
+        { url: '/homedetails/foo/b_lid/' },
+      ],
+      include_summary: true,
+    });
+    const parsed = parseToolResult<{
+      summary?: Array<{ field: string; values: unknown[] }>;
+    }>(r);
+    expect(parsed.summary).toBeDefined();
+    const price = parsed.summary!.find((r) => r.field === 'price')!;
+    expect(price.values).toEqual([100_000, 200_000]);
+  });
+
+  it('accepts up to 25 targets — cap raised from 8 in #53', async () => {
+    mockFetchHtml.mockImplementation(async () =>
+      htmlWith({
+        listingIdSHA: 'x',
+        pageLink: '/x/x_lid/',
+        price: { lastKnown: 1 },
+      })
+    );
+    const r = await harness.callTool('compass_compare_properties', {
+      targets: Array.from({ length: 25 }, (_, i) => ({
+        url: `/homedetails/foo/x${i}_lid/`,
+      })),
+    });
+    expect(r.isError).toBeFalsy();
+    const parsed = parseToolResult<{ count: number; results: unknown[] }>(r);
+    expect(parsed.count).toBe(25);
+  });
+
+  it('rejects more than 25 targets', async () => {
+    const r = await harness.callTool('compass_compare_properties', {
+      targets: Array.from({ length: 26 }, (_, i) => ({
+        url: `/homedetails/foo/x${i}_lid/`,
+      })),
+    });
+    expect(r.isError).toBeTruthy();
+  });
+
   it('captures per-target errors without failing the whole call', async () => {
     let n = 0;
     mockFetchHtml.mockImplementation(async () => {

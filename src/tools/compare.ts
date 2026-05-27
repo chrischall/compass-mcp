@@ -72,7 +72,7 @@ export function registerCompareTools(
     {
       title: 'Compare Compass properties side-by-side',
       description:
-        "Fetch 2 or more Compass properties and align their facts side-by-side. Each target may supply `url` (a full Compass homedetails URL or path) or `listing_id_sha` alone — sha-only targets are resolved internally via Compass site search before fetching. Returns a compact summary table aligned by field (address, price, beds/baths, sqft, $/sqft, status, etc.) plus the full per-property record. Per-target errors are captured per-row — one bad target will not fail the whole call. Calls are concurrent.",
+        "Fetch 2 or more Compass properties and align their facts side-by-side. Each target may supply `url` (a full Compass homedetails URL or path) or `listing_id_sha` alone — sha-only targets are resolved internally via Compass site search before fetching. Returns the full per-property record per row (with `extracted_features` populated). Per-target errors are captured per-row — one bad target will not fail the whole call. Calls are concurrent. The raw `description` is omitted from each row by default — pass `include_description: true` to keep it. The redundant `summary` table is also opt-in via `include_summary: true` — by default only `results[]` is returned, which already carries every fact.",
       annotations: {
         title: 'Compare Compass properties side-by-side',
         readOnlyHint: true,
@@ -100,11 +100,25 @@ export function registerCompareTools(
               .passthrough()
           )
           .min(2)
-          .max(8)
-          .describe('Array of 2–8 properties to compare'),
+          .max(25)
+          .describe(
+            'Array of 2–25 properties to compare. (Cap raised from 8 to 25 in #53; for unbounded structured fetch without the summary table, use `compass_bulk_get`.)'
+          ),
+        include_description: z
+          .boolean()
+          .optional()
+          .describe(
+            'Include the raw `description` (Compass marketing copy) on each row. Defaults to `false` — `extracted_features` is always populated.'
+          ),
+        include_summary: z
+          .boolean()
+          .optional()
+          .describe(
+            'Include the pivoted `summary` table (one row per compared field, one column per listing). Defaults to `false` — `results[].property.*` already carries every fact and the summary was roughly 30% of response weight. Useful only for human-readable rendering.'
+          ),
       },
     },
-    async ({ targets }) => {
+    async ({ targets, include_description, include_summary }) => {
       const ts = targets as CompareTarget[];
       const rows: CompareRow[] = await Promise.all(
         ts.map(async (t) => {
@@ -115,7 +129,9 @@ export function registerCompareTools(
               url: listing.pageLink
                 ? `https://www.compass.com${listing.pageLink}`
                 : undefined,
-              property: format(listing),
+              property: format(listing, {
+                includeDescription: include_description,
+              }),
             };
           } catch (e) {
             return {
@@ -126,12 +142,16 @@ export function registerCompareTools(
           }
         })
       );
-      const summary = buildSummary(rows);
-      return textResult({
+      const body: {
+        count: number;
+        summary?: SummaryRow[];
+        results: CompareRow[];
+      } = {
         count: rows.length,
-        summary,
         results: rows,
-      });
+      };
+      if (include_summary === true) body.summary = buildSummary(rows);
+      return textResult(body);
     }
   );
 }
