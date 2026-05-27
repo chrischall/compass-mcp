@@ -73,6 +73,22 @@ export interface RawSchool {
   types?: string[];
 }
 
+/**
+ * Annual property tax in Compass's payload. Some new-construction
+ * listings carry sentinel placeholders (`0` or `1`) for not-yet-assessed
+ * values — the formatter nulls those out so callers don't treat $1 as
+ * a real tax bill. (Issue #38.)
+ */
+export interface RawAssociationFee {
+  amount?: number;
+  /**
+   * `Monthly | Annually | Quarterly | SemiAnnually | Weekly`. Anything
+   * else maps to `hoa_monthly_usd: null` with a stderr warn so unknown
+   * shapes don't silently get treated as monthly. (Issue #36.)
+   */
+  frequency?: string;
+}
+
 export interface RawDetailedInfo {
   amenities?: string[];
   schools?: RawSchool[];
@@ -81,6 +97,10 @@ export interface RawDetailedInfo {
   view?: string;
   architecturalStyle?: string;
   garageSpaces?: number;
+  /** Annual property tax in USD. See sentinel-value cleanup, issue #38. */
+  taxAnnualAmount?: number;
+  /** HOA-fee bundle. Drives `hoa_monthly_usd` normalization. (Issue #36.) */
+  associationFee?: RawAssociationFee;
 }
 
 /** Subset of media used to type-check photo/history tools; full shapes live alongside their tools. */
@@ -133,6 +153,13 @@ export interface RawListing {
   media?: RawListingMediaItem[];
   events?: RawListingHistoryEvent[];
   history?: RawListingHistoryEvent[];
+  /**
+   * Alternate addresses from MLS feeds — surfaced as `address_alternates`
+   * when they disagree with `location.prettyAddress`. Real-world example:
+   * "109 vs 169 Overlook Point Ln" between Compass and Canopy MLS for
+   * the same listing. (Issue #44.)
+   */
+  mlsAlternateAddresses?: string[];
 }
 
 export interface FormattedProperty {
@@ -147,6 +174,14 @@ export interface FormattedProperty {
    * listing record.
    */
   pid?: string;
+  /**
+   * Sheets-paste-ready hyperlink formula pointing at the same listing.
+   * Always present (mirrors `url`). Pasting into Google Sheets renders
+   * as a clickable "Compass" link. Uses the stable `_pid/` URL form
+   * when a `pid` is available; otherwise falls back to `_lid/`.
+   * (Issue #43.)
+   */
+  portal_url_hyperlink: string;
   compass_property_id?: number;
   url: string;
   property_url?: string;
@@ -155,6 +190,12 @@ export interface FormattedProperty {
   mls_status?: string;
   is_off_mls?: boolean;
   address?: string;
+  /**
+   * Alternate addresses surfaced by other MLS feeds when they disagree
+   * with the primary `address`. Omitted when no alternates are present
+   * (or when all alternates normalize to the primary). (Issue #44.)
+   */
+  address_alternates?: string[];
   city?: string;
   state?: string;
   zip?: string;
@@ -168,6 +209,34 @@ export interface FormattedProperty {
   last_asking?: number;
   price_per_sqft?: number;
   monthly_charges?: number;
+  /**
+   * Derived from `events[]` — `previous_list_price - current_price`
+   * when both are known. `null` when there's no prior list event.
+   * (Issue #37.)
+   */
+  price_drop_amount?: number | null;
+  /**
+   * `(previous - current) / previous * 100`, rounded to 0.1. `null`
+   * when either side is missing. (Issue #37.)
+   */
+  price_drop_percent?: number | null;
+  /**
+   * Days since the earliest "Listed" event timestamp. `null` when no
+   * such event is present. (Issue #37.)
+   */
+  days_on_market?: number | null;
+  /**
+   * Annual property tax. Nulled out for the 0/1 not-yet-assessed
+   * sentinel that Compass surfaces on some new-construction listings.
+   * (Issue #38.)
+   */
+  tax_annual?: number | null;
+  /**
+   * HOA fee normalized to monthly USD, rounded to the nearest dollar.
+   * `null` for unknown frequencies or when no fee is reported.
+   * (Issue #36.)
+   */
+  hoa_monthly_usd?: number | null;
   beds?: number;
   baths?: number;
   full_baths?: number;
@@ -328,6 +397,147 @@ export interface FormatOptions {
   includeDescription?: boolean;
 }
 
+/**
+ * Compose the Sheets-paste-ready `=HYPERLINK(...)` formula for a
+ * Compass listing. Prefers the stable `_pid/` form when a pid is
+ * available; falls back to `_lid/`. Always returns a valid formula
+ * string — callers shouldn't have to special-case the cell.
+ * (Issue #43.)
+ */
+export function buildPortalUrlHyperlink(args: {
+  pid?: string;
+  navigationPageLink?: string;
+  pageLink?: string;
+  listingIdSHA?: string;
+}): string {
+  const pidUrl = args.navigationPageLink
+    ? `https://www.compass.com${args.navigationPageLink}`
+    : undefined;
+  const lidUrl = args.pageLink
+    ? `https://www.compass.com${args.pageLink}`
+    : `https://www.compass.com/homedetails/${args.listingIdSHA ?? ''}_lid/`;
+  const target = args.pid ? (pidUrl ?? lidUrl) : lidUrl;
+  return `=HYPERLINK("${target}","Compass")`;
+}
+
+/**
+ * Convert an HOA `{amount, frequency}` to monthly USD, rounded to the
+ * nearest dollar. Returns `null` for unknown frequency strings (with a
+ * stderr warning so misclassification is visible) or when the inputs
+ * are absent. (Issue #36.)
+ */
+export function hoaToMonthlyUsd(
+  amount: number | undefined,
+  frequency: string | undefined
+): number | null {
+  if (typeof amount !== 'number' || !frequency) return null;
+  let monthly: number;
+  switch (frequency) {
+    case 'Monthly':
+      monthly = amount;
+      break;
+    case 'Annually':
+      monthly = amount / 12;
+      break;
+    case 'Quarterly':
+      monthly = amount / 3;
+      break;
+    case 'SemiAnnually':
+      monthly = amount / 6;
+      break;
+    case 'Weekly':
+      monthly = (amount * 52) / 12;
+      break;
+    default:
+      console.error(
+        `[compass-mcp] hoa_monthly_usd: unknown frequency "${frequency}" — returning null`
+      );
+      return null;
+  }
+  return Math.round(monthly);
+}
+
+/**
+ * Null out the 0/1 not-yet-assessed sentinel that Compass surfaces on
+ * some new-construction listings. (Issue #38.)
+ */
+export function sanitizeTaxAnnual(raw: number | undefined): number | null {
+  if (typeof raw !== 'number') return null;
+  // Real-world: $1 is a not-yet-assessed placeholder for new
+  // construction; $0 is the same placeholder under a different MLS
+  // feed's convention. Null both.
+  if (raw <= 1) return null;
+  return raw;
+}
+
+/**
+ * Earliest "Listed" event from a Compass events[] array. We treat
+ * `status === 1` AND/OR `localizedStatus === 'Listed'` as the listed
+ * signal — Compass's numeric statuses include both 'Listed' and various
+ * relisting / contract-fallthrough variants. Returns undefined when
+ * nothing qualifies.
+ */
+function earliestListedEvent(
+  events: RawListingHistoryEvent[] | undefined
+): RawListingHistoryEvent | undefined {
+  if (!events || events.length === 0) return undefined;
+  const listed = events.filter(
+    (e) =>
+      e.status === 1 ||
+      (e.localizedStatus && /^listed$/i.test(e.localizedStatus))
+  );
+  if (listed.length === 0) return undefined;
+  return listed.reduce((earliest, e) =>
+    (e.timestamp ?? Infinity) < (earliest.timestamp ?? Infinity) ? e : earliest
+  );
+}
+
+/**
+ * Days between `ms` (a unix-ms timestamp) and now, floored. Returns
+ * null if the timestamp is missing.
+ */
+function daysSinceMs(ms: number | undefined): number | null {
+  if (typeof ms !== 'number') return null;
+  const delta = Date.now() - ms;
+  if (!Number.isFinite(delta)) return null;
+  return Math.floor(delta / 86_400_000);
+}
+
+/**
+ * Normalize an address for equality checks — collapse whitespace, drop
+ * punctuation, lowercase. Used to dedupe `address_alternates` against
+ * the primary `address`.
+ */
+function normalizeAddressForCompare(s: string | undefined): string {
+  if (!s) return '';
+  return s.toLowerCase().replace(/[,#.]/g, '').replace(/\s+/g, ' ').trim();
+}
+
+/**
+ * Collect alternate-address strings, excluding any that normalize to
+ * the primary. Returns an empty array when nothing distinct surfaces.
+ * (Issue #44.)
+ */
+export function collectAddressAlternates(
+  primary: string | undefined,
+  raw: RawListing
+): string[] {
+  const primaryNorm = normalizeAddressForCompare(primary);
+  const candidates: string[] = [];
+  for (const c of raw.mlsAlternateAddresses ?? []) {
+    if (typeof c === 'string' && c.trim()) candidates.push(c.trim());
+  }
+  const seen = new Set<string>();
+  const alternates: string[] = [];
+  for (const candidate of candidates) {
+    const norm = normalizeAddressForCompare(candidate);
+    if (!norm || norm === primaryNorm || seen.has(norm)) continue;
+    seen.add(norm);
+    alternates.push(candidate);
+  }
+  return alternates;
+}
+
 export function format(
   listing: RawListing,
   opts: FormatOptions = {}
@@ -353,9 +563,41 @@ export function format(
   const extractedFeatures: ExtractedFeatures | undefined = listing.description
     ? extractFeatures(listing.description, loadCommunities())
     : undefined;
+  // Derived fields (issues #36–#38, #43, #44). Each helper is pure and
+  // unit-tested; the return shape below stays declarative.
+  const portalUrlHyperlink = buildPortalUrlHyperlink({
+    pid,
+    navigationPageLink: listing.navigationPageLink,
+    pageLink: listing.pageLink,
+    listingIdSHA: listing.listingIdSHA,
+  });
+  const hoaMonthlyUsd = hoaToMonthlyUsd(
+    dInfo.associationFee?.amount,
+    dInfo.associationFee?.frequency
+  );
+  const taxAnnual = sanitizeTaxAnnual(dInfo.taxAnnualAmount);
+  // price_drop_* + days_on_market: derive from the events[] trail.
+  const listedEvent = earliestListedEvent(listing.events);
+  const previousListPrice = listedEvent?.price;
+  const currentPrice = price.lastKnown;
+  let priceDropAmount: number | null = null;
+  let priceDropPercent: number | null = null;
+  if (
+    typeof previousListPrice === 'number' &&
+    typeof currentPrice === 'number' &&
+    previousListPrice > 0 &&
+    previousListPrice !== currentPrice
+  ) {
+    const drop = previousListPrice - currentPrice;
+    priceDropAmount = drop;
+    priceDropPercent = Math.round((drop / previousListPrice) * 1000) / 10;
+  }
+  const daysOnMarket = daysSinceMs(listedEvent?.timestamp);
+  const alternates = collectAddressAlternates(loc.prettyAddress, listing);
   return {
     listing_id_sha: listing.listingIdSHA,
     pid,
+    portal_url_hyperlink: portalUrlHyperlink,
     compass_property_id: listing.compassPropertyId,
     url,
     property_url: propertyUrl,
@@ -364,6 +606,7 @@ export function format(
     mls_status: listing.mlsStatus,
     is_off_mls: listing.isOffMLS,
     address: loc.prettyAddress,
+    address_alternates: alternates.length > 0 ? alternates : undefined,
     city: loc.city,
     state: loc.state,
     zip: loc.zipCode,
@@ -377,6 +620,11 @@ export function format(
     last_asking: price.lastAsking,
     price_per_sqft: price.perSquareFoot,
     monthly_charges: price.monthlySalesChargesInclTaxes,
+    price_drop_amount: priceDropAmount,
+    price_drop_percent: priceDropPercent,
+    days_on_market: daysOnMarket,
+    tax_annual: taxAnnual,
+    hoa_monthly_usd: hoaMonthlyUsd,
     beds: size.bedrooms,
     baths: size.totalBathrooms ?? size.bathrooms,
     full_baths: size.fullBathrooms,
