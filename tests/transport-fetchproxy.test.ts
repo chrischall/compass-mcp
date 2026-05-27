@@ -137,6 +137,94 @@ describe('FetchproxyTransport', () => {
     }
   });
 
+  it('lazy-revive: retries once after delay when first attempt hits SW eviction (#50)', async () => {
+    // First call returns bridge_down; after the 0ms retry delay, the
+    // second call succeeds. Models the common case where Chrome wakes
+    // the evicted service worker via the inbound message that just
+    // failed.
+    const t = new FetchproxyTransport({
+      version: '0.0.0',
+      bridgeDownRetryDelayMs: 0, // zero-delay so the test runs quickly
+    });
+    const inner = stubInner();
+    inner.fetch
+      .mockResolvedValueOnce({
+        ok: false,
+        error: 'Receiving end does not exist.',
+        kind: 'content_script_unreachable',
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        body: 'hello after revive',
+        url: 'https://www.compass.com/x',
+      });
+    installInner(t, inner);
+    const result = await t.fetch({ path: '/x', method: 'GET' });
+    expect(result.body).toBe('hello after revive');
+    expect(inner.fetch).toHaveBeenCalledTimes(2);
+  });
+
+  it('lazy-revive: surfaces the original bridge_down error when retry also fails', async () => {
+    const t = new FetchproxyTransport({
+      version: '0.0.0',
+      bridgeDownRetryDelayMs: 0,
+    });
+    const inner = stubInner();
+    inner.fetch.mockResolvedValue({
+      ok: false,
+      error: 'Receiving end does not exist.',
+      kind: 'content_script_unreachable',
+    });
+    installInner(t, inner);
+    try {
+      await t.fetch({ path: '/x', method: 'GET' });
+      expect.fail('should have thrown');
+    } catch (e) {
+      expect(e).toBeInstanceOf(FetchproxyBridgeDownError);
+    }
+    // Both the original attempt and the retry were issued.
+    expect(inner.fetch).toHaveBeenCalledTimes(2);
+  });
+
+  it('lazy-revive: does NOT retry on non-bridge_down failures (#50)', async () => {
+    // no_tab is not a SW-eviction signal — surface the error without
+    // a retry. (Retrying would mask user-actionable failures.)
+    const t = new FetchproxyTransport({
+      version: '0.0.0',
+      bridgeDownRetryDelayMs: 0,
+    });
+    const inner = stubInner();
+    inner.fetch.mockResolvedValue({
+      ok: false,
+      error: 'no_tab',
+      kind: 'no_tab',
+    });
+    installInner(t, inner);
+    await expect(t.fetch({ path: '/x', method: 'GET' })).rejects.toThrow(
+      /no_tab/
+    );
+    expect(inner.fetch).toHaveBeenCalledTimes(1);
+  });
+
+  it('lazy-revive: retry can be disabled with bridgeDownRetryDelayMs=-1 (#50)', async () => {
+    const t = new FetchproxyTransport({
+      version: '0.0.0',
+      bridgeDownRetryDelayMs: -1,
+    });
+    const inner = stubInner();
+    inner.fetch.mockResolvedValue({
+      ok: false,
+      error: 'Receiving end does not exist.',
+      kind: 'content_script_unreachable',
+    });
+    installInner(t, inner);
+    await expect(t.fetch({ path: '/x', method: 'GET' })).rejects.toBeInstanceOf(
+      FetchproxyBridgeDownError
+    );
+    expect(inner.fetch).toHaveBeenCalledTimes(1);
+  });
+
   it('routes content_script_unreachable kind to FetchproxyBridgeDownError regardless of message text', async () => {
     // The decision to throw FetchproxyBridgeDownError is now driven by
     // @fetchproxy/server's typed `kind` field, not by regex on `error`.
