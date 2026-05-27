@@ -112,9 +112,17 @@ export function buildEventsNormalized(
 ): NormalizedEvent[] {
   type Pair = { raw: RawListingHistoryEvent; type: NormalizedEventType };
   const recognized: Pair[] = [];
+  // Dedup belt-and-suspenders: if Compass ever surfaces the current
+  // listing's events in history[] as well, collapse duplicates by
+  // (timestamp, type, price) tuple. Today history[] is prior-listing
+  // events only, but this is cheap insurance.
+  const seen = new Set<string>();
   for (const e of [...events, ...history]) {
     const type = normalizeEventType(e.localizedStatus);
     if (!type || typeof e.timestamp !== 'number') continue;
+    const key = `${e.timestamp}|${type}|${typeof e.price === 'number' ? e.price : ''}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
     recognized.push({ raw: e, type });
   }
   // Stable sort by timestamp ascending.
