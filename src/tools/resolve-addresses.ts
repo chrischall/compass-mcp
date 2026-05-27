@@ -42,12 +42,10 @@ interface UnresolvedRow {
 type RowResult = ResolvedRow | UnresolvedRow;
 
 /**
- * Address-match policy for bulk resolver — mirror of `addressMatchesQuery`
- * from `compass_get_by_address`, kept inline so this tool ships
- * independently. `compass_get_by_address` skips this check for single
- * calls, but bulk amplifies the corruption surface (#45), so each row
- * must verify independently. See by-address.ts for the canonical match
- * policy (lowercase + canonicalize street types + substring/token check).
+ * Address-match policy for the bulk resolver. `compass_get_by_address`
+ * skips this check for single calls, but bulk amplifies the corruption
+ * surface (#45), so each row must verify independently (lowercase +
+ * canonicalize street types + substring/token check).
  */
 const STREET_TYPE_CANON: Array<[RegExp, string]> = [
   [/\bboulevard\b/g, 'blvd'],
@@ -119,7 +117,9 @@ async function resolveOne(
         query,
       };
     }
-    // formatHome stashes the pid-form URL in property_url; strip origin to recover the path.
+    // formatHome stashes the pid-form URL in property_url; strip origin
+    // to recover the path. Reverse out the path to extract the pid,
+    // when present.
     const pid = extractPidFromUrl(
       matched.property_url?.replace('https://www.compass.com', '')
     );
