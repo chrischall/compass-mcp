@@ -122,6 +122,7 @@ export class CompassClient {
   }
 
   async start(): Promise<void> {
+    // Asymmetry intentional: start() only the active transport; registerSession() during run is future scaffolding, close() being symmetric across all sessions is intentional.
     await this.transport.start();
   }
 

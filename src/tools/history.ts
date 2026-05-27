@@ -54,6 +54,97 @@ export function formatHistoryEvent(
   };
 }
 
+/**
+ * Shared cross-MCP price-history enum (issue #48). Each sister
+ * real-estate MCP exposes its own price-history schema; this enum is
+ * the union that callers can rely on regardless of upstream provider.
+ */
+export type NormalizedEventType =
+  | 'Listed'
+  | 'PriceChange'
+  | 'Pending'
+  | 'Contingent'
+  | 'Sold'
+  | 'Withdrawn'
+  | 'Relisted'
+  | 'Delisted';
+
+export interface NormalizedEvent {
+  date: string;
+  type: NormalizedEventType;
+  price?: number;
+  /** Percent change from the previous priced event, rounded to 0.1. */
+  price_change_pct?: number;
+  source_mls?: string;
+}
+
+/**
+ * Map a Compass `localizedStatus` (e.g. "Listed", "Price Change",
+ * "Sold", "Off Market") to a shared cross-MCP type. Returns undefined
+ * for shapes we don't recognize — we drop those rather than guess.
+ */
+export function normalizeEventType(
+  localizedStatus: string | undefined
+): NormalizedEventType | undefined {
+  if (!localizedStatus) return undefined;
+  const s = localizedStatus.toLowerCase().trim();
+  // Order matters where a value matches multiple regexes — list the
+  // more specific cases first.
+  if (/relist|re-?list/.test(s)) return 'Relisted';
+  if (/(^listed$|active|coming soon|new listing|for sale)/.test(s)) return 'Listed';
+  if (/price.?(change|decrease|increase|reduced|adjust)/.test(s)) return 'PriceChange';
+  if (/pending/.test(s)) return 'Pending';
+  if (/contingent/.test(s)) return 'Contingent';
+  if (/(^sold$|closed|completed)/.test(s)) return 'Sold';
+  if (/withdrawn/.test(s)) return 'Withdrawn';
+  if (/(delisted|off market|expired|cancel|temporar)/.test(s)) return 'Delisted';
+  return undefined;
+}
+
+/**
+ * Merge `events[]` + `history[]` into a single chronological array of
+ * normalized events, computing `price_change_pct` relative to the
+ * previous priced event. (Issue #48.)
+ */
+export function buildEventsNormalized(
+  events: RawListingHistoryEvent[],
+  history: RawListingHistoryEvent[]
+): NormalizedEvent[] {
+  type Pair = { raw: RawListingHistoryEvent; type: NormalizedEventType };
+  const recognized: Pair[] = [];
+  for (const e of [...events, ...history]) {
+    const type = normalizeEventType(e.localizedStatus);
+    if (!type || typeof e.timestamp !== 'number') continue;
+    recognized.push({ raw: e, type });
+  }
+  // Stable sort by timestamp ascending.
+  recognized.sort((a, b) => (a.raw.timestamp ?? 0) - (b.raw.timestamp ?? 0));
+  let lastPrice: number | undefined;
+  const out: NormalizedEvent[] = [];
+  for (const { raw, type } of recognized) {
+    const entry: NormalizedEvent = {
+      date: new Date(raw.timestamp as number).toISOString().slice(0, 10),
+      type,
+    };
+    if (typeof raw.price === 'number') entry.price = raw.price;
+    if (raw.source?.sourceDisplayName) entry.source_mls = raw.source.sourceDisplayName;
+    // price_change_pct: compare to the *previous priced* event,
+    // independent of `type`. (A "Pending" with no price won't reset
+    // the comparison baseline.)
+    if (
+      typeof raw.price === 'number' &&
+      typeof lastPrice === 'number' &&
+      lastPrice > 0
+    ) {
+      entry.price_change_pct =
+        Math.round(((raw.price - lastPrice) / lastPrice) * 1000) / 10;
+    }
+    if (typeof raw.price === 'number') lastPrice = raw.price;
+    out.push(entry);
+  }
+  return out;
+}
+
 export function registerHistoryTools(
   server: McpServer,
   client: CompassClient
@@ -63,7 +154,7 @@ export function registerHistoryTools(
     {
       title: 'Get Compass listing-history events',
       description:
-        "Full listing history for a Compass property — Listed / Sold / Pending / Price Change / Delisted events with date, price, and MLS attribution. Returns two parallel arrays: `events` covers this listing's events, `history` aggregates events from prior listings of the same property. Pass either `url` (the full Compass homedetails URL or path) or `listing_id_sha` alone — sha-only calls are resolved internally via Compass site search. Read-only; safe to call repeatedly.",
+        "Full listing history for a Compass property — Listed / Sold / Pending / Price Change / Delisted events with date, price, and MLS attribution. Returns three arrays: `events` covers this listing's events, `history` aggregates events from prior listings of the same property, and `events_normalized` merges both into a shared cross-MCP schema (`{date, type, price?, price_change_pct?, source_mls?}` with a fixed type enum: Listed | PriceChange | Pending | Contingent | Sold | Withdrawn | Relisted | Delisted). Pass either `url` (the full Compass homedetails URL or path) or `listing_id_sha` alone — sha-only calls are resolved internally via Compass site search. Note: most of this data is already returned inline on `compass_get_property` (the events[] / history[] arrays live on the same listing record); call this tool only when you want the merged + normalized timeline. Read-only; safe to call repeatedly.",
       annotations: {
         title: 'Get Compass listing-history events',
         readOnlyHint: true,
@@ -92,6 +183,13 @@ export function registerHistoryTools(
       });
       const events = (listing.events ?? []).map(formatHistoryEvent);
       const history = (listing.history ?? []).map(formatHistoryEvent);
+      // events_normalized merges both arrays into the shared cross-MCP
+      // schema documented in issue #48. The original `events` /
+      // `history` arrays stay for back-compat.
+      const eventsNormalized = buildEventsNormalized(
+        listing.events ?? [],
+        listing.history ?? []
+      );
       return textResult({
         listing_id_sha: listing.listingIdSHA,
         // `pid` is the stable short ID (from navigationPageLink's
@@ -105,6 +203,7 @@ export function registerHistoryTools(
         history_count: history.length,
         events,
         history,
+        events_normalized: eventsNormalized,
       });
     }
   );
