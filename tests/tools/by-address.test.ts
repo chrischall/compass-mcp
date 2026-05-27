@@ -119,6 +119,40 @@ describe('addressMatchesQuery', () => {
     expect(addressMatchesQuery('', { address: '126 Sleeping Bear Ln' })).toBe(false);
     expect(addressMatchesQuery(undefined, { address: '126 Sleeping Bear Ln' })).toBe(false);
   });
+
+  // Issue #55 review: substring vs. whole-token matching.
+  // `cand.includes(t)` lets a short query number/token match inside a
+  // longer candidate token (e.g. "12" inside "1234", "Lee" inside
+  // "Leesburg"). Both branches must use whole-token equality.
+  it('rejects when street number is a prefix of a different number', () => {
+    // Query "12 Oak St" must NOT match candidate "1234 Oak St".
+    expect(
+      addressMatchesQuery('1234 Oak St, Dallas, TX', {
+        address: '12 Oak St',
+        city: 'Dallas',
+      })
+    ).toBe(false);
+  });
+
+  it('rejects when street number is a prefix and city matches', () => {
+    // The numeric-prefix collision must lose even when city matches.
+    expect(
+      addressMatchesQuery('512 Main Rd, Springfield, IL', {
+        address: '5 Main Rd',
+        city: 'Springfield',
+      })
+    ).toBe(false);
+  });
+
+  it('rejects when city name is a substring of a different city', () => {
+    // Query city "Lee" must NOT match candidate city "Leesburg".
+    expect(
+      addressMatchesQuery('126 Sleeping Bear Ln, Leesburg, VA', {
+        address: '126 Sleeping Bear Ln',
+        city: 'Lee',
+      })
+    ).toBe(false);
+  });
 });
 
 describe('extractPidFromNavigationPageLink', () => {

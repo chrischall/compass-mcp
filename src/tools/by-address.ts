@@ -125,6 +125,11 @@ export function addressMatchesQuery(
 ): boolean {
   const cand = normalizeAddressForMatch(candidate);
   if (!cand) return false;
+  // Split candidate into whole tokens. We compare token-equality rather
+  // than substring containment to avoid prefix collisions like "12"
+  // matching inside "1234" or "Lee" matching inside "Leesburg" — the
+  // very class of silent wrong-match this PR is closing (issue #45).
+  const candTokenSet = new Set(cand.split(' ').filter((t) => t.length > 0));
   const streetTokens = normalizeAddressForMatch(query.address)
     .split(' ')
     .filter((t) => t.length > 0);
@@ -132,8 +137,9 @@ export function addressMatchesQuery(
   // Require at least one numeric token in the street — a street name
   // alone ("Main St") matches too aggressively.
   if (!streetTokens.some((t) => /\d/.test(t))) return false;
-  // Every street-line token must appear in the candidate.
-  if (!streetTokens.every((t) => cand.includes(t))) return false;
+  // Every street-line token must appear in the candidate as a whole
+  // token.
+  if (!streetTokens.every((t) => candTokenSet.has(t))) return false;
   // If a city is given and the candidate has more than just the street
   // (i.e. there are extra tokens), require the city to be present too —
   // this is the gate that rejects the Charlotte-condo case where the
@@ -142,7 +148,7 @@ export function addressMatchesQuery(
     const cityTokens = normalizeAddressForMatch(query.city)
       .split(' ')
       .filter((t) => t.length > 0);
-    if (cityTokens.length > 0 && !cityTokens.every((t) => cand.includes(t))) {
+    if (cityTokens.length > 0 && !cityTokens.every((t) => candTokenSet.has(t))) {
       return false;
     }
   }
@@ -216,6 +222,15 @@ export function registerByAddressTools(
       // gate from issue #45.
       const matched = candidates.find((entry) => {
         const l = entry.listing!;
+        // Compass cards encode the human-readable address line(s) in
+        // `subtitles`. In practice the first subtitle is always the
+        // street line and the second is the City/State/ZIP line. If a
+        // listing has a `listingIdSHA` but no `subtitles` (off-market,
+        // data-gap edges), we can't verify the match — silently skip
+        // rather than risk a wrong-match leak. The pre-fix behaviour
+        // would have returned such a listing as the top hit; trading a
+        // rare false-negative for the silent wrong-match in issue #45
+        // is the explicit policy.
         const subtitleAddress = (l.subtitles ?? []).join(', ');
         return addressMatchesQuery(subtitleAddress, input);
       });
