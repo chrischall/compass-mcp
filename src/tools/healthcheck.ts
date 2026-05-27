@@ -2,9 +2,10 @@ import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import type { CompassClient } from '../client.js';
 import { textResult } from '../mcp.js';
 import {
+  classifyBridgeError,
   FetchproxyBridgeDownError,
   FetchproxyTimeoutError,
-} from '../transport-fetchproxy.js';
+} from '@fetchproxy/server';
 
 /**
  * Round-trip a no-op request through the full bridge so the user can
@@ -40,6 +41,14 @@ interface HealthcheckResult {
     last_failure_reason: string | null;
     /** Count of failures since the last success (or process start, if none). */
     consecutive_failures: number;
+    /**
+     * Unix-ms of the most recent inner frame received from the extension
+     * (regardless of whether it was a success/failure for the caller).
+     * Distinct from `last_success_at` / `last_failure_at`, which track
+     * user-visible outcomes — this is "is the extension still answering?"
+     * liveness. `null` until the first frame arrives.
+     */
+    last_extension_message_at: number | null;
   };
   probe: {
     url: string;
@@ -48,10 +57,25 @@ interface HealthcheckResult {
     body_length?: number;
   };
   error?: {
-    kind: 'timeout' | 'transport' | 'bridge_down' | 'other';
+    /**
+     * Discriminator from `classifyBridgeError`. `'protocol'` covers
+     * generic FetchproxyProtocolError (no_tab, domain_denied, etc.) —
+     * the label compass historically called `'transport'`.
+     */
+    kind: 'timeout' | 'bridge_down' | 'http' | 'protocol' | 'other';
     message: string;
-    /** When the timeout fired, the role at the moment of failure. */
+    /** Role at the moment of failure. Sourced from the typed error (0.8.0+) when present, else `bridgeStatus()`. */
     role_at_failure?: 'host' | 'peer' | null;
+    /** Port at the moment of failure. Sourced from the typed error (0.8.0+). */
+    port_at_failure?: number;
+    /** Actual elapsed milliseconds for this call (from the typed error when available, else measured). */
+    elapsed_ms?: number;
+    /**
+     * Server-authored next-step hint on FetchproxyBridgeDownError
+     * (0.8.0+). Distinct from `hint` below — that one is compass's own
+     * end-to-end guidance; this one is the bridge author's text.
+     */
+    bridge_hint?: string;
   };
   /** Plain-English next-step suggestion derived from the result. */
   hint: string;
@@ -62,7 +86,11 @@ const PROBE_PATH = '/robots.txt';
 function hintFor(args: {
   ok: boolean;
   role: 'host' | 'peer' | null;
-  errorKind?: 'timeout' | 'transport' | 'bridge_down' | 'other';
+  errorKind?: HealthcheckResult['error'] extends infer E
+    ? E extends { kind: infer K }
+      ? K
+      : never
+    : never;
 }): string {
   if (args.ok) {
     return `Bridge round-tripped /robots.txt successfully. If real tools still hang, the problem is downstream of fetchproxy (Compass redirecting on login, behavioral challenge, etc.) — not the bridge.`;
@@ -81,7 +109,7 @@ function hintFor(args: {
   if (args.errorKind === 'timeout') {
     return `Bridge is alive (role=${args.role}), but the request didn't get a response in time. Either (a) the fetchproxy browser extension isn't connected to this MCP yet — open the extension popup and check for a green dot next to "compass-mcp", or (b) the signed-in compass.com tab is sleeping / closed. Open compass.com in your browser, then retry.`;
   }
-  if (args.errorKind === 'transport') {
+  if (args.errorKind === 'protocol' || args.errorKind === 'http') {
     return `The bridge returned a protocol error before any HTTP response. Most commonly: no compass.com tab is open, or the extension declined the request. Open compass.com, sign in, and retry.`;
   }
   return `Unexpected error — see the error.message field for details.`;
@@ -126,27 +154,50 @@ export function registerHealthcheckTools(
         };
         ok = true;
       } catch (e) {
-        const elapsedMs = Date.now() - start;
-        // Role at failure comes from the bridge snapshot read just below —
-        // 0.8.0 typed errors no longer carry role/port directly.
+        const measuredElapsedMs = Date.now() - start;
+        // 0.8.0: `classifyBridgeError` replaces the `instanceof` ladder.
+        // It enforces correct subclass-before-parent ordering once and
+        // returns a stable string discriminator. Note compass's old
+        // `'transport'` arm maps to `'protocol'` in the helper's
+        // vocabulary — same condition, new label.
+        const kind = classifyBridgeError(e);
+        const message = e instanceof Error ? e.message : String(e);
+        // 0.8.0 typed errors carry role/port/elapsedMs directly — pull
+        // them off here (source of truth for THIS throw) rather than
+        // re-reading bridgeStatus() afterwards, which can drift if
+        // anything else races on the bridge between throw and snapshot.
+        let elapsedMs: number | undefined;
+        let roleAtFailure: 'host' | 'peer' | null | undefined;
+        let portAtFailure: number | undefined;
+        let bridgeHint: string | undefined;
         if (e instanceof FetchproxyTimeoutError) {
-          error = { kind: 'timeout', message: e.message };
+          elapsedMs = e.elapsedMs;
+          roleAtFailure = e.role;
+          portAtFailure = e.port;
         } else if (e instanceof FetchproxyBridgeDownError) {
-          error = { kind: 'bridge_down', message: e.message };
-        } else if (e instanceof Error && /fetchproxy/i.test(e.message)) {
-          error = { kind: 'transport', message: e.message };
-        } else {
-          error = {
-            kind: 'other',
-            message: e instanceof Error ? e.message : String(e),
-          };
+          roleAtFailure = e.role;
+          portAtFailure = e.port;
+          bridgeHint = e.hint;
         }
-        probe = { ...probe, elapsed_ms: elapsedMs };
+        error = {
+          kind,
+          message,
+          ...(roleAtFailure !== undefined ? { role_at_failure: roleAtFailure } : {}),
+          ...(portAtFailure !== undefined ? { port_at_failure: portAtFailure } : {}),
+          ...(elapsedMs !== undefined ? { elapsed_ms: elapsedMs } : {}),
+          ...(bridgeHint !== undefined ? { bridge_hint: bridgeHint } : {}),
+        };
+        probe = { ...probe, elapsed_ms: elapsedMs ?? measuredElapsedMs };
       }
       // Re-read after the probe — the server's bridgeHealth() counters
       // just updated, so this snapshot includes this very call.
       const postProbeBridge = client.bridgeStatus();
-      if (error) error.role_at_failure = postProbeBridge.role;
+      // If the typed error didn't supply role_at_failure (e.g. an
+      // 'other' kind, or a bare FetchproxyProtocolError without a
+      // role field), fall back to the post-probe snapshot.
+      if (error && error.role_at_failure === undefined) {
+        error.role_at_failure = postProbeBridge.role;
+      }
       const result: HealthcheckResult = {
         ok,
         bridge: {
@@ -158,6 +209,7 @@ export function registerHealthcheckTools(
           last_failure_at: postProbeBridge.lastFailureAt,
           last_failure_reason: postProbeBridge.lastFailureReason,
           consecutive_failures: postProbeBridge.consecutiveFailures,
+          last_extension_message_at: postProbeBridge.lastExtensionMessageAt,
         },
         probe,
         ...(error ? { error } : {}),
