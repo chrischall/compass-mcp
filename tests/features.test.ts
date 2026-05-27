@@ -102,13 +102,27 @@ describe('extractFeatures', () => {
         extractFeatures('Furnishings negotiable', baseCommunities).furnished
       ).toBe('negotiable');
     });
-    it('returns "partial" for "with exceptions"', () => {
+    it('returns "partial" for "furnished with exceptions"', () => {
       expect(
         extractFeatures('Furnished with exceptions', baseCommunities).furnished
       ).toBe('partial');
     });
     it('returns null when no furnished mention', () => {
       expect(extractFeatures('Beautiful home', baseCommunities).furnished).toBeNull();
+    });
+    it('does NOT misfire on bare "with exceptions" in non-furnishing context (false-positive pin)', () => {
+      expect(
+        extractFeatures(
+          'Sold with exceptions per title report; modern open floor plan.',
+          baseCommunities
+        ).furnished
+      ).toBeNull();
+      expect(
+        extractFeatures(
+          'HOA documents available with exceptions noted in section 3.',
+          baseCommunities
+        ).furnished
+      ).toBeNull();
     });
   });
 

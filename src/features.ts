@@ -116,7 +116,11 @@ const BASEMENT_PARTIAL_RE =
 const BASEMENT_MENTIONED_RE = /\bbasement\b/i;
 
 const FURNISHED_FULLY_RE = /\b(?:fully furnished|sold furnished|turnkey)\b/i;
-const FURNISHED_PARTIAL_RE = /\b(?:almost furnished|furnished with exceptions|with exceptions)\b/i;
+// `with exceptions` is intentionally NOT a standalone alternative — real
+// estate descriptions routinely contain "with exceptions" in title /
+// survey / HOA / disclosure contexts unrelated to furnishings. Require
+// the `furnished` token to anchor the match.
+const FURNISHED_PARTIAL_RE = /\b(?:almost furnished|furnished with exceptions)\b/i;
 const FURNISHED_NEGOTIABLE_RE = /\bfurnishings (?:are )?negotiable\b/i;
 
 const DOCK_PRIVATE_RE = /\bprivate (?:boat )?dock\b/i;
