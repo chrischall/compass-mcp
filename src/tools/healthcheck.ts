@@ -127,19 +127,13 @@ export function registerHealthcheckTools(
         ok = true;
       } catch (e) {
         const elapsedMs = Date.now() - start;
+        // Role at failure comes from the bridge snapshot read just below —
+        // 0.8.0 typed errors no longer carry role/port directly.
         if (e instanceof FetchproxyTimeoutError) {
-          error = {
-            kind: 'timeout',
-            message: e.message,
-            role_at_failure: e.role,
-          };
+          error = { kind: 'timeout', message: e.message };
         } else if (e instanceof FetchproxyBridgeDownError) {
-          error = {
-            kind: 'bridge_down',
-            message: e.message,
-            role_at_failure: e.role,
-          };
-        } else if (e instanceof Error && /fetchproxy transport error/.test(e.message)) {
+          error = { kind: 'bridge_down', message: e.message };
+        } else if (e instanceof Error && /fetchproxy/i.test(e.message)) {
           error = { kind: 'transport', message: e.message };
         } else {
           error = {
@@ -149,10 +143,10 @@ export function registerHealthcheckTools(
         }
         probe = { ...probe, elapsed_ms: elapsedMs };
       }
-      // Re-read after the probe — recordSuccess/recordFailure on the
-      // transport just updated the counters, so this snapshot reflects
-      // the freshest state including this very call.
+      // Re-read after the probe — the server's bridgeHealth() counters
+      // just updated, so this snapshot includes this very call.
       const postProbeBridge = client.bridgeStatus();
+      if (error) error.role_at_failure = postProbeBridge.role;
       const result: HealthcheckResult = {
         ok,
         bridge: {

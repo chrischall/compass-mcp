@@ -46,6 +46,8 @@ export interface BridgeStatus {
   lastFailureReason: string | null;
   /** Number of failures since the last success (or since process start, if none). */
   consecutiveFailures: number;
+  /** Unix-ms of the most recent inner frame from the extension (0.8.0+). `null` until first frame. */
+  lastExtensionMessageAt: number | null;
 }
 
 export interface CompassTransport {
