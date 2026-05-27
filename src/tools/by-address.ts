@@ -16,8 +16,17 @@ import { findLolResults } from './search.js';
  * present). The `_pid/` URL is preferred for stable references — sha
  * URLs go stale on relisting (see issue #27).
  *
+ * Match verification (issue #45). Compass's `?q=...` search degrades
+ * into a far-away top hit when the local market has no match — pre-fix
+ * the tool was happily returning resolved:true for those hits (e.g.
+ * "126 Sleeping Bear Ln, Lake Lure, NC 28746" silently resolving to a
+ * Charlotte condo). Every candidate is now validated against the query
+ * (case + abbreviation normalization, then substring/token check); if
+ * no candidate matches the tool returns resolved:false rather than
+ * leak the wrong URL.
+ *
  * Graceful degradation: when no listing matches, the tool returns
- * `{ resolved: false, error: "no listing found" }` rather than
+ * `{ resolved: false, error: "no listing matched" }` rather than
  * throwing. The unified `get_property_canonical_links` umbrella tool
  * fans out across multiple per-site MCPs and needs each per-site
  * primitive to degrade quietly when its site has no match.
@@ -62,6 +71,91 @@ function formatAddressLine(input: ByAddressInput): string {
 }
 
 /**
+ * Common US street-type abbreviations, longest-form first so a "Lane"
+ * rule doesn't trip on a shorter regex.
+ */
+const STREET_TYPE_CANON: Array<[RegExp, string]> = [
+  [/\bboulevard\b/g, 'blvd'],
+  [/\bstreet\b/g, 'st'],
+  [/\bavenue\b/g, 'ave'],
+  [/\bdrive\b/g, 'dr'],
+  [/\broad\b/g, 'rd'],
+  [/\bcourt\b/g, 'ct'],
+  [/\bplace\b/g, 'pl'],
+  [/\blane\b/g, 'ln'],
+  [/\bcircle\b/g, 'cir'],
+  [/\bterrace\b/g, 'ter'],
+  [/\bhighway\b/g, 'hwy'],
+  [/\bparkway\b/g, 'pkwy'],
+  [/\bsuite\b/g, 'ste'],
+];
+
+/**
+ * Normalize an address for substring comparison: lowercase, strip
+ * punctuation, collapse whitespace, fold common street-type aliases.
+ * Exported for direct unit-testing.
+ */
+export function normalizeAddressForMatch(s: string | undefined): string {
+  if (!s) return '';
+  let out = s
+    .toLowerCase()
+    .normalize('NFKD')
+    .replace(/[̀-ͯ]/g, '')
+    .replace(/[.,#\/\\]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+  for (const [re, repl] of STREET_TYPE_CANON) out = out.replace(re, repl);
+  return out.replace(/\s+/g, ' ').trim();
+}
+
+/**
+ * Decide whether the candidate's address string actually matches the
+ * caller's query. The candidate must contain every normalized token
+ * from the query.address (street line), AND at least one numeric token
+ * must be present (guards against matching on city/state words alone).
+ * When the caller also supplied `city`/`state`/`zip`, those count as
+ * positive signal but don't have to all appear — Compass's card
+ * subtitles often drop the ZIP, and some listings drop the state.
+ *
+ * Exported for direct unit-testing of the match policy.
+ */
+export function addressMatchesQuery(
+  candidate: string | undefined,
+  query: ByAddressInput
+): boolean {
+  const cand = normalizeAddressForMatch(candidate);
+  if (!cand) return false;
+  // Split candidate into whole tokens. We compare token-equality rather
+  // than substring containment to avoid prefix collisions like "12"
+  // matching inside "1234" or "Lee" matching inside "Leesburg" — the
+  // very class of silent wrong-match this PR is closing (issue #45).
+  const candTokenSet = new Set(cand.split(' ').filter((t) => t.length > 0));
+  const streetTokens = normalizeAddressForMatch(query.address)
+    .split(' ')
+    .filter((t) => t.length > 0);
+  if (streetTokens.length === 0) return false;
+  // Require at least one numeric token in the street — a street name
+  // alone ("Main St") matches too aggressively.
+  if (!streetTokens.some((t) => /\d/.test(t))) return false;
+  // Every street-line token must appear in the candidate as a whole
+  // token.
+  if (!streetTokens.every((t) => candTokenSet.has(t))) return false;
+  // If a city is given and the candidate has more than just the street
+  // (i.e. there are extra tokens), require the city to be present too —
+  // this is the gate that rejects the Charlotte-condo case where the
+  // street numbers happen to overlap.
+  if (query.city) {
+    const cityTokens = normalizeAddressForMatch(query.city)
+      .split(' ')
+      .filter((t) => t.length > 0);
+    if (cityTokens.length > 0 && !cityTokens.every((t) => candTokenSet.has(t))) {
+      return false;
+    }
+  }
+  return true;
+}
+
+/**
  * Re-export of `extractPidFromUrl` under its original tool-local name
  * for back-compat with callers that imported it from this module before
  * it was promoted to `src/url.ts`.
@@ -93,8 +187,7 @@ export function registerByAddressTools(
     {
       title: 'Resolve a Compass listing by street address',
       description:
-        "Resolve a free-text street address to a Compass listing's canonical URL and identifiers in one call. Fires a single `/homes-for-sale/?q=<address>` site search, takes the top result, and returns `{ url, listing_id_sha, pid, address, resolved }`. The `url` is the stable `_pid/` form when Compass returns a `navigationPageLink` (preferred for trackers/bookmarks — sha URLs go stale on relisting), falling back to the `_lid/` form otherwise. " +
-        'When no listing matches, returns `{ resolved: false, error: "no listing found" }` rather than throwing — supports graceful degradation by an umbrella caller that fans out across multiple per-site resolvers. Read-only; safe to call repeatedly.',
+        "Resolve a free-text street address to a Compass listing's canonical URL and identifiers in one call. Fires a single `/homes-for-sale/?q=<address>` site search, takes the top candidate that ACTUALLY MATCHES the query address (case + street-type abbreviation normalization, then substring/token check), and returns `{ url, listing_id_sha, pid, address, resolved }`. When no candidate matches — including the failure mode where Compass returns a far-away top hit for a query its local market doesn't cover — returns `{ resolved: false, error: \"no listing matched\" }` rather than leaking the wrong URL. The `url` is the stable `_pid/` form when Compass provides a `navigationPageLink` (preferred for trackers/bookmarks — sha URLs go stale on relisting), falling back to the `_lid/` form otherwise. Read-only; safe to call repeatedly.",
       annotations: {
         title: 'Resolve a Compass listing by street address',
         readOnlyHint: true,
@@ -121,12 +214,31 @@ export function registerByAddressTools(
       const html = await client.fetchHtml(searchPath);
       const uc = extractUc(html);
       const lol = uc ? findLolResults(uc) : null;
-      const top = (lol?.data ?? []).find((e) => e?.listing?.listingIdSHA);
-      const listing = top?.listing;
+      const candidates = (lol?.data ?? []).filter(
+        (e) => e?.listing?.listingIdSHA
+      );
+      // Walk candidates in returned order; pick the first whose address
+      // verifies against the query. This is the silent-wrong-match
+      // gate from issue #45.
+      const matched = candidates.find((entry) => {
+        const l = entry.listing!;
+        // Compass cards encode the human-readable address line(s) in
+        // `subtitles`. In practice the first subtitle is always the
+        // street line and the second is the City/State/ZIP line. If a
+        // listing has a `listingIdSHA` but no `subtitles` (off-market,
+        // data-gap edges), we can't verify the match — silently skip
+        // rather than risk a wrong-match leak. The pre-fix behaviour
+        // would have returned such a listing as the top hit; trading a
+        // rare false-negative for the silent wrong-match in issue #45
+        // is the explicit policy.
+        const subtitleAddress = (l.subtitles ?? []).join(', ');
+        return addressMatchesQuery(subtitleAddress, input);
+      });
+      const listing = matched?.listing;
       if (!listing) {
         const result: ByAddressUnresolved = {
           resolved: false,
-          error: 'no listing found',
+          error: 'no listing matched the address',
           address: addressLine,
         };
         return textResult(result);
