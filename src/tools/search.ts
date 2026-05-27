@@ -185,6 +185,13 @@ export interface SearchInput {
 export const COMPASS_PAGE_SIZE = 5;
 
 /**
+ * Hard cap on SSR page fetches per `compass_search_properties` call.
+ * Documented in the tool description so callers know the upper bound
+ * and can plan pagination. (Issue #47.)
+ */
+export const MAX_PAGES = 50;
+
+/**
  * Build the `/homes-for-sale/<slug>/<filters>/[page-N/]` path for a
  * search. Order matches Compass's URL canonicalization: beds, then
  * price, then home type, then page. Returns a leading-slash path ready
@@ -251,6 +258,7 @@ export function registerSearchTools(
         "Search Compass listings by location (city, ZIP, neighborhood) and optional filters. Resolves free-text via slugification into Compass's URL routing, then fetches the SSR search-results pages and extracts the embedded listings array. Compass returns " +
         `${COMPASS_PAGE_SIZE} listings per SSR page; this tool fetches additional pages as needed to satisfy \`limit\`, and accepts \`offset\` for cursor-style continuation. ` +
         'When more results remain, the response carries `next_offset` — pass it back as `offset` to page forward. ' +
+        `RESULT-CAP HONESTY (issue #47): there is a hard safety cap of ${MAX_PAGES} SSR page fetches per call (≈${MAX_PAGES * COMPASS_PAGE_SIZE} listings). For markets with more results, page through with the \`offset\` cursor, or narrow with \`price_min\` / \`price_max\` / \`beds_min\`/\`beds_max\` to bucket the result set. ` +
         "Returns each matching listing's address, price, beds/baths, sqft, primary photo URL, lat/lng, the Compass homedetails URL (`_lid/` form, content-addressed by `listing_id_sha`), and the stable `_pid/` URL via `property_url` and the surfaced `pid` field. " +
         "USE `pid`/`_pid/` FOR LONG-LIVED REFERENCES (trackers, sheets, bookmarks) — sha-based `_lid/` URLs change when a property is delisted and relisted. Use the sha-based URL to fetch the current listing record. Read-only; safe to call repeatedly.",
       annotations: {
@@ -305,8 +313,8 @@ export function registerSearchTools(
 
       // Fetch successive Compass pages until we have `limit` formatted
       // results or the source runs out. Bound the loop by `totalItems`
-      // when present and by a hard cap as a safety net.
-      const MAX_PAGES = 50;
+      // when present and by MAX_PAGES (module constant) as a safety
+      // net. The cap is documented in the tool description (#47).
       let pathLog = '';
       while (collected.length < limit && pagesFetched < MAX_PAGES) {
         const path = buildSearchPath({ ...input, page: currentPage });

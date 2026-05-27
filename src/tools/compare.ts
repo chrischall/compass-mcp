@@ -100,8 +100,10 @@ export function registerCompareTools(
               .passthrough()
           )
           .min(2)
-          .max(8)
-          .describe('Array of 2–8 properties to compare'),
+          .max(25)
+          .describe(
+            'Array of 2–25 properties to compare. (Cap raised from 8 to 25 in #53; for unbounded structured fetch without the summary table, use `compass_bulk_get`.)'
+          ),
         include_description: z
           .boolean()
           .optional()

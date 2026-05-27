@@ -74,6 +74,22 @@ export interface RawSchool {
 }
 
 /**
+ * Listing-side agent record. Compass surfaces these on the listing
+ * page (the agent panel under the photo carousel). We lift the
+ * primary (first) agent's id + name + brokerage onto the formatted
+ * record. (Issue #52.)
+ */
+export interface RawListingAgent {
+  id?: string;
+  fullName?: string;
+  firstName?: string;
+  lastName?: string;
+  companyName?: string;
+  email?: string;
+  phone?: string;
+}
+
+/**
  * Annual property tax in Compass's payload. Some new-construction
  * listings carry sentinel placeholders (`0` or `1`) for not-yet-assessed
  * values — the formatter nulls those out so callers don't treat $1 as
@@ -160,6 +176,11 @@ export interface RawListing {
    * the same listing. (Issue #44.)
    */
   mlsAlternateAddresses?: string[];
+  /**
+   * Listing agents in priority order — first is the primary. Surfaced
+   * on `FormattedProperty.listing_agent`. (Issue #52.)
+   */
+  agents?: RawListingAgent[];
 }
 
 export interface FormattedProperty {
@@ -275,6 +296,19 @@ export interface FormattedProperty {
     great_schools_rating?: number;
     types?: string[];
   }>;
+  /**
+   * Primary listing agent (first entry in the upstream `agents[]`).
+   * Omitted when no agents are present. (Issue #52.) The full inline
+   * agent-history block called out in #52 isn't implemented here —
+   * Compass doesn't expose the agent's other listings on the
+   * homedetails record; surfacing the agent id is the minimal honest
+   * step until that data path is plumbed.
+   */
+  listing_agent?: {
+    id?: string;
+    name?: string;
+    brokerage?: string;
+  };
 }
 
 interface ListingRelation {
@@ -594,6 +628,20 @@ export function format(
   }
   const daysOnMarket = daysSinceMs(listedEvent?.timestamp);
   const alternates = collectAddressAlternates(loc.prettyAddress, listing);
+  // Primary listing agent (issue #52). Compass surfaces multiple agents
+  // sometimes; the first entry is the listing agent.
+  const primaryAgent = listing.agents?.[0];
+  let listingAgent: FormattedProperty['listing_agent'];
+  if (primaryAgent) {
+    const composedName =
+      [primaryAgent.firstName, primaryAgent.lastName].filter(Boolean).join(' ') ||
+      undefined;
+    listingAgent = {
+      id: primaryAgent.id,
+      name: primaryAgent.fullName ?? composedName,
+      brokerage: primaryAgent.companyName,
+    };
+  }
   return {
     listing_id_sha: listing.listingIdSHA,
     pid,
@@ -653,6 +701,7 @@ export function format(
       great_schools_rating: s.greatSchoolsRating,
       types: s.types,
     })),
+    listing_agent: listingAgent,
   };
 }
 
