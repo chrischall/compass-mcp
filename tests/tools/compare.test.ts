@@ -203,6 +203,7 @@ describe('compass_compare_properties tool', () => {
     expect(r.isError).toBeTruthy();
   });
 
+
   it('captures per-target errors without failing the whole call', async () => {
     let n = 0;
     mockFetchHtml.mockImplementation(async () => {
