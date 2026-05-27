@@ -72,7 +72,7 @@ export function registerCompareTools(
     {
       title: 'Compare Compass properties side-by-side',
       description:
-        "Fetch 2 or more Compass properties and align their facts side-by-side. Each target may supply `url` (a full Compass homedetails URL or path) or `listing_id_sha` alone — sha-only targets are resolved internally via Compass site search before fetching. Returns a compact summary table aligned by field (address, price, beds/baths, sqft, $/sqft, status, etc.) plus the full per-property record. Per-target errors are captured per-row — one bad target will not fail the whole call. Calls are concurrent.",
+        "Fetch 2 or more Compass properties and align their facts side-by-side. Each target may supply `url` (a full Compass homedetails URL or path) or `listing_id_sha` alone — sha-only targets are resolved internally via Compass site search before fetching. Returns a compact summary table aligned by field (address, price, beds/baths, sqft, $/sqft, status, etc.) plus the full per-property record (with `extracted_features` populated). Per-target errors are captured per-row — one bad target will not fail the whole call. Calls are concurrent. The raw `description` is omitted from each row by default — pass `include_description: true` to keep it.",
       annotations: {
         title: 'Compare Compass properties side-by-side',
         readOnlyHint: true,
@@ -102,9 +102,15 @@ export function registerCompareTools(
           .min(2)
           .max(8)
           .describe('Array of 2–8 properties to compare'),
+        include_description: z
+          .boolean()
+          .optional()
+          .describe(
+            'Include the raw `description` (Compass marketing copy) on each row. Defaults to `false` — `extracted_features` is always populated.'
+          ),
       },
     },
-    async ({ targets }) => {
+    async ({ targets, include_description }) => {
       const ts = targets as CompareTarget[];
       const rows: CompareRow[] = await Promise.all(
         ts.map(async (t) => {
@@ -115,7 +121,9 @@ export function registerCompareTools(
               url: listing.pageLink
                 ? `https://www.compass.com${listing.pageLink}`
                 : undefined,
-              property: format(listing),
+              property: format(listing, {
+                includeDescription: include_description,
+              }),
             };
           } catch (e) {
             return {

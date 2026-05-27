@@ -5,6 +5,11 @@ import { textResult } from '../mcp.js';
 import { extractInitialData, extractUc } from '../page-state.js';
 import { extractPidFromUrl, urlToPath } from '../url.js';
 import { findLolResults } from './search.js';
+import {
+  extractFeatures,
+  loadCommunities,
+  type ExtractedFeatures,
+} from '../features.js';
 
 /**
  * Compass homedetails: GET /homedetails/<slug>/<listingIdSHA>_lid/
@@ -171,7 +176,20 @@ export interface FormattedProperty {
   lot_size_sqft?: number;
   lot_size_formatted?: string;
   rooms?: number;
+  /**
+   * Raw `listing.description` (Compass-side marketing copy). Omitted
+   * by default — callers usually keyword-parse and discard it; the
+   * server-side `extracted_features` block covers the common needs.
+   * Pass `include_description: true` on the tool input to keep it.
+   * (Issue #34.)
+   */
   description?: string;
+  /**
+   * Structured keyword signals lifted from the raw description. Always
+   * populated when the listing has any description text at all.
+   * (Issue #35.)
+   */
+  extracted_features?: ExtractedFeatures;
   amenities?: string[];
   parcel_number?: string;
   architectural_style?: string;
@@ -300,7 +318,20 @@ export async function fetchListingRecord(
   return { listing, path };
 }
 
-export function format(listing: RawListing): FormattedProperty {
+export interface FormatOptions {
+  /**
+   * Include the raw `description` in the output. Defaults to `false`
+   * because callers usually only need the structured `extracted_features`
+   * block (which is always populated when description text exists).
+   * (Issue #34.)
+   */
+  includeDescription?: boolean;
+}
+
+export function format(
+  listing: RawListing,
+  opts: FormatOptions = {}
+): FormattedProperty {
   const loc = listing.location ?? {};
   const size = listing.size ?? {};
   const price = listing.price ?? {};
@@ -315,6 +346,13 @@ export function format(listing: RawListing): FormattedProperty {
     ? `https://www.compass.com${listing.navigationPageLink}`
     : undefined;
   const pid = extractPidFromUrl(listing.navigationPageLink);
+  // Pre-compute extracted_features (cheap) whenever a description is
+  // present, so callers can drop the raw prose. (Issue #35.) The raw
+  // description itself is opt-in via FormatOptions.includeDescription
+  // — see Issue #34 for the context-savings rationale.
+  const extractedFeatures: ExtractedFeatures | undefined = listing.description
+    ? extractFeatures(listing.description, loadCommunities())
+    : undefined;
   return {
     listing_id_sha: listing.listingIdSHA,
     pid,
@@ -347,7 +385,10 @@ export function format(listing: RawListing): FormattedProperty {
     lot_size_sqft: size.lotSizeInSquareFeet,
     lot_size_formatted: size.formattedLotSize,
     rooms: size.totalRooms,
-    description: listing.description,
+    // description is opt-in via FormatOptions; extracted_features is
+    // always present when there's any description text to pull from.
+    description: opts.includeDescription ? listing.description : undefined,
+    extracted_features: extractedFeatures,
     amenities: dInfo.amenities,
     parcel_number: listing.parcelNumber,
     architectural_style: dInfo.architecturalStyle,
@@ -376,7 +417,8 @@ export function registerPropertyTools(
     {
       title: 'Get Compass property details',
       description:
-        "Fetch a property's full Compass record. Pass either `url` (a full Compass homedetails URL or path from a compass_search_properties result) or `listing_id_sha` alone — when only the sha is supplied, the tool resolves the canonical /homedetails/<slug>/<sha>_lid/ path internally via Compass site search. Returns address, neighborhood, beds/baths, sqft, price + price-per-sqft, monthly charges, MLS status, amenities, schools, parcel number, and the canonical Compass URL.\n\n" +
+        "Fetch a property's full Compass record. Pass either `url` (a full Compass homedetails URL or path from a compass_search_properties result) or `listing_id_sha` alone — when only the sha is supplied, the tool resolves the canonical /homedetails/<slug>/<sha>_lid/ path internally via Compass site search. Returns address, neighborhood, beds/baths, sqft, price + price-per-sqft, monthly charges, MLS status, amenities, schools, parcel number, and the canonical Compass URL. Also returns `extracted_features` (lake_front, hot_tub, basement, furnished, dock, community) keyword-parsed from the description.\n\n" +
+        "DESCRIPTION HANDLING: The raw `description` (Compass marketing copy) is omitted by default — pass `include_description: true` to keep it. `extracted_features` is always populated and usually sufficient.\n\n" +
         "URL FORMS: Compass exposes two URL shapes for a listing. `_lid/` (content-addressed by `listing_id_sha`) — what this tool fetches and what `url` returns — is the form to use for reading the current listing record. `_pid/` (opaque short ID, in `property_url` and the surfaced `pid` field) is **stable across re-listings** and is the right choice for any long-lived reference (trackers, sheets, bookmarks); sha-based URLs go stale when a property is delisted and relisted. Read-only; safe to call repeatedly.",
       annotations: {
         title: 'Get Compass property details',
@@ -397,14 +439,22 @@ export function registerPropertyTools(
           .describe(
             'Compass listing identifier (the SHA inside `<sha>_lid`). Sufficient on its own — the tool will resolve the address slug internally via Compass site search before fetching the homedetails page (one extra HTTP round-trip).'
           ),
+        include_description: z
+          .boolean()
+          .optional()
+          .describe(
+            'Include the raw `description` (Compass marketing copy) in the response. Defaults to `false` — `extracted_features` is always populated and usually covers the common needs.'
+          ),
       },
     },
-    async ({ url, listing_id_sha }) => {
+    async ({ url, listing_id_sha, include_description }) => {
       const { listing } = await fetchListingRecord(client, {
         url,
         listing_id_sha,
       });
-      return textResult(format(listing));
+      return textResult(
+        format(listing, { includeDescription: include_description })
+      );
     }
   );
 }
