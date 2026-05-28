@@ -508,7 +508,10 @@ const SQFT_PER_ACRE = 43_560;
  *
  * Null-safe: returns `null` (never `0`) when the input is missing,
  * non-finite, or `<= 0` — a `0`/absent lot is treated as missing (condos /
- * missing public records), not a real "0 acre" lot.
+ * missing public records), not a real "0 acre" lot. A tiny positive lot
+ * that rounds to `0.00` acres (sqft 1–217) also yields `null`, so the
+ * field stays consistent with the canonical cohort semantic (present ⇒
+ * a real, non-zero acreage).
  */
 export function lotSizeAcres(
   lotSqFt: number | undefined | null
@@ -516,7 +519,8 @@ export function lotSizeAcres(
   if (typeof lotSqFt !== 'number' || !Number.isFinite(lotSqFt) || lotSqFt <= 0) {
     return null;
   }
-  return Math.round((lotSqFt / SQFT_PER_ACRE) * 100) / 100;
+  const acres = Math.round((lotSqFt / SQFT_PER_ACRE) * 100) / 100;
+  return acres > 0 ? acres : null;
 }
 
 /**
@@ -707,8 +711,6 @@ export function format(
     half_baths: size.halfBathrooms,
     sqft: size.squareFeet,
     lot_size_sqft: size.lotSizeInSquareFeet,
-    // #82 derived lot_size_acres. Null-safe: an absent or 0 lot
-    // (condos / missing data) yields null, never 0.
     lot_size_acres: lotSizeAcres(size.lotSizeInSquareFeet),
     lot_size_formatted: size.formattedLotSize,
     rooms: size.totalRooms,

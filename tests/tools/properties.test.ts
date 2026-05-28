@@ -135,6 +135,12 @@ describe('lotSizeAcres (#82)', () => {
   it('zero lot size → null (treated as missing, never 0 acres)', () => {
     expect(lotSizeAcres(0)).toBeNull();
   });
+  it('tiny positive lot that rounds to 0.00 → null (never 0)', () => {
+    // 200 / 43560 = 0.0046… → rounds to 0.00, which must null out so the
+    // field stays consistent with the canonical cohort semantic.
+    expect(lotSizeAcres(200)).toBeNull();
+    expect(lotSizeAcres(200)).not.toBe(0);
+  });
   it('non-finite input → null', () => {
     expect(lotSizeAcres(NaN)).toBeNull();
   });
@@ -215,7 +221,7 @@ describe('format', () => {
     expect(out.half_baths).toBe(1);
     expect(out.sqft).toBe(3400);
     expect(out.lot_size_sqft).toBe(4500);
-    // #82: 4500 / 43560 = 0.1033… → 0.10
+    // 4500 / 43560 = 0.1033… → 0.10
     expect(out.lot_size_acres).toBe(0.1);
     expect(out.price_per_sqft).toBeCloseTo(734.71);
     expect(out.monthly_charges).toBeCloseTo(929.23);
@@ -259,6 +265,22 @@ describe('format', () => {
     expect(out.lot_size_sqft).toBeUndefined();
     expect(out.lot_size_acres).toBeNull();
     // Must be null, never the 0 placeholder.
+    expect(out.lot_size_acres).not.toBe(0);
+  });
+
+  it('lot_size_acres is null for a tiny lot that rounds to 0, but lot_size_sqft stays set', () => {
+    // 200 sqft → 0.0046… acres → rounds to 0.00, which must null out even
+    // though the raw sqft is a real, present value.
+    const out = format({
+      listingIdSHA: 'tiny',
+      location: { prettyAddress: '1 Sliver Ln' },
+      size: {
+        squareFeet: 900,
+        lotSizeInSquareFeet: 200,
+      },
+    });
+    expect(out.lot_size_sqft).toBe(200);
+    expect(out.lot_size_acres).toBeNull();
     expect(out.lot_size_acres).not.toBe(0);
   });
 
