@@ -4,7 +4,11 @@ import type { CompassClient } from '../client.js';
 import { textResult } from '../mcp.js';
 import { extractUc } from '../page-state.js';
 import { extractPidFromUrl } from '../url.js';
-import { buildAddressQuery, type ByAddressInput } from './by-address.js';
+import {
+  addressMatchesQuery,
+  buildAddressQuery,
+  type ByAddressInput,
+} from './by-address.js';
 import { findLolResults, formatHome, type FormattedHome } from './search.js';
 
 /**
@@ -20,6 +24,14 @@ import { findLolResults, formatHome, type FormattedHome } from './search.js';
  * miss MUST return `resolved: false` with no URL leak. Per-row errors
  * (HTTP / parse failures) are captured separately so one bad input
  * doesn't fail the whole call.
+ *
+ * Bulk/single parity (issue #67). The address-match rung is delegated
+ * to `addressMatchesQuery` from `./by-address.js` — the SAME helper the
+ * single `compass_get_by_address` tool uses — so the two paths can't
+ * drift on subtleties like substring vs. whole-token comparison. The
+ * bulk path historically carried a local copy that used `cand.includes`
+ * substring containment and silently leaked prefix-collision wrong
+ * matches (e.g. "12 Oak St" resolving to "1234 Oak St").
  */
 
 export const RESOLVE_ADDRESSES_MAX = 100;
@@ -41,57 +53,6 @@ interface UnresolvedRow {
 
 type RowResult = ResolvedRow | UnresolvedRow;
 
-/**
- * Address-match policy for the bulk resolver. `compass_get_by_address`
- * skips this check for single calls, but bulk amplifies the corruption
- * surface (#45), so each row must verify independently (lowercase +
- * canonicalize street types + substring/token check).
- */
-const STREET_TYPE_CANON: Array<[RegExp, string]> = [
-  [/\bboulevard\b/g, 'blvd'],
-  [/\bstreet\b/g, 'st'],
-  [/\bavenue\b/g, 'ave'],
-  [/\bdrive\b/g, 'dr'],
-  [/\broad\b/g, 'rd'],
-  [/\bcourt\b/g, 'ct'],
-  [/\bplace\b/g, 'pl'],
-  [/\blane\b/g, 'ln'],
-  [/\bcircle\b/g, 'cir'],
-  [/\bterrace\b/g, 'ter'],
-  [/\bhighway\b/g, 'hwy'],
-  [/\bparkway\b/g, 'pkwy'],
-  [/\bsuite\b/g, 'ste'],
-];
-
-function normalize(s: string | undefined): string {
-  if (!s) return '';
-  let out = s
-    .toLowerCase()
-    .normalize('NFKD')
-    .replace(/[̀-ͯ]/g, '')
-    .replace(/[.,#\/\\]/g, ' ')
-    .replace(/\s+/g, ' ')
-    .trim();
-  for (const [re, repl] of STREET_TYPE_CANON) out = out.replace(re, repl);
-  return out.replace(/\s+/g, ' ').trim();
-}
-
-function addressMatches(candidate: string | undefined, q: ByAddressInput): boolean {
-  const cand = normalize(candidate);
-  if (!cand) return false;
-  const streetTokens = normalize(q.address).split(' ').filter((t) => t.length > 0);
-  if (streetTokens.length === 0) return false;
-  if (!streetTokens.some((t) => /\d/.test(t))) return false;
-  if (!streetTokens.every((t) => cand.includes(t))) return false;
-  if (q.city) {
-    const cityTokens = normalize(q.city).split(' ').filter((t) => t.length > 0);
-    if (cityTokens.length > 0 && !cityTokens.every((t) => cand.includes(t))) {
-      return false;
-    }
-  }
-  return true;
-}
-
 async function resolveOne(
   client: CompassClient,
   input: ByAddressInput
@@ -107,8 +68,11 @@ async function resolveOne(
       .filter((h): h is FormattedHome => h !== null);
     const matched = candidates.find((h) => {
       // Use both subtitle parts as the candidate string (street + locality).
+      // Single uses `(l.subtitles ?? []).join(', ')` — formatHome stashes
+      // subtitle[0] in address and subtitle[1] in neighborhood, so this
+      // recovers the same string.
       const candAddr = [h.address, h.neighborhood].filter(Boolean).join(', ');
-      return addressMatches(candAddr, input);
+      return addressMatchesQuery(candAddr, input);
     });
     if (!matched) {
       return {
