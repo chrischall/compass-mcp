@@ -65,6 +65,8 @@ export class FetchproxyTransport implements CompassTransport {
       // Subdomains of compass.com (www, photos, etc.) match automatically.
       domains: ['compass.com'],
       fetchTimeoutMs: this.fetchTimeoutMs,
+      // fetchproxy#71 — keep SW resident across human-paced session gaps
+      keepAliveIntervalMs: 25_000,
       ...(opts.bridgeReviveDelayMs !== undefined
         ? { bridgeReviveDelayMs: opts.bridgeReviveDelayMs }
         : {}),

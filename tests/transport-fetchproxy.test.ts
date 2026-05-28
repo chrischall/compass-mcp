@@ -211,4 +211,35 @@ describe('FetchproxyTransport', () => {
     await t.close();
     expect(inner.close).toHaveBeenCalledTimes(1);
   });
+
+  it('passes keepAliveIntervalMs: 25_000 to FetchproxyServer (fetchproxy#71 — keep SW resident across human-paced session gaps)', async () => {
+    // Use vi.doMock to swap in a capturing FetchproxyServer subclass,
+    // then dynamically re-import FetchproxyTransport so its module-scope
+    // binding resolves to the patched class.
+    const seen: Array<Record<string, unknown>> = [];
+    vi.resetModules();
+    vi.doMock('@fetchproxy/server', async () => {
+      const actual = await vi.importActual<typeof import('@fetchproxy/server')>(
+        '@fetchproxy/server'
+      );
+      class Capturing extends actual.FetchproxyServer {
+        constructor(opts: ConstructorParameters<typeof actual.FetchproxyServer>[0]) {
+          seen.push(opts as unknown as Record<string, unknown>);
+          super(opts);
+        }
+      }
+      return { ...actual, FetchproxyServer: Capturing };
+    });
+    const { FetchproxyTransport: PatchedTransport } = await import(
+      '../src/transport-fetchproxy.js'
+    );
+
+    new PatchedTransport({ version: '1.2.3' });
+
+    expect(seen).toHaveLength(1);
+    expect(seen[0].keepAliveIntervalMs).toBe(25_000);
+
+    vi.doUnmock('@fetchproxy/server');
+    vi.resetModules();
+  });
 });
