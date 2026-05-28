@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterAll } from 'vitest';
 import type { CompassClient } from '../../src/client.js';
 import { registerResolveAddressesTools } from '../../src/tools/resolve-addresses.js';
+import { registerByAddressTools } from '../../src/tools/by-address.js';
 import { createTestHarness, parseToolResult } from '../helpers.js';
 
 const mockFetchHtml = vi.fn();
@@ -146,5 +147,145 @@ describe('compass_resolve_addresses tool', () => {
     expect(parsed.rows[1].resolved).toBe(false);
     expect(parsed.rows[1].error).toMatch(/upstream fault/);
     expect(parsed.rows[2].resolved).toBe(true);
+  });
+
+  // Issue #67: bulk vs single resolver parity audit.
+  //
+  // The bulk path historically grew its own copy of the address-match
+  // helper that used `cand.includes(t)` substring containment, while the
+  // single path used whole-token equality (the explicit fix for the
+  // #55 prefix-collision class). Bulk amplifies the corruption surface,
+  // so the two MUST run the same match policy.
+  describe('#67 bulk/single parity', () => {
+    it('CRITICAL: rejects a prefix-collision wrong-match (parity with single)', async () => {
+      // Query "12 Oak St" must NOT match candidate "1234 Oak St" — the
+      // single's `addressMatchesQuery` explicitly guards this class via
+      // whole-token equality. Bulk must do the same.
+      mockFetchHtml.mockResolvedValue(
+        searchHtml([
+          {
+            listing: {
+              listingIdSHA: 'sha-prefix-collision',
+              pageLink: '/homedetails/1234-oak-st-dallas-tx/sha-prefix-collision_lid/',
+              subtitles: ['1234 Oak St', 'Dallas, TX'],
+            },
+          },
+        ])
+      );
+      const r = await harness.callTool('compass_resolve_addresses', {
+        addresses: [{ address: '12 Oak St', city: 'Dallas', state: 'TX' }],
+      });
+      const parsed = parseToolResult<{
+        rows: Array<{ resolved: boolean; url?: string }>;
+      }>(r);
+      expect(parsed.rows[0].resolved).toBe(false);
+      expect(parsed.rows[0].url).toBeUndefined();
+    });
+
+    it('CRITICAL: rejects city-substring wrong-match (parity with single)', async () => {
+      // Query city "Lee" must NOT match candidate city "Leesburg".
+      mockFetchHtml.mockResolvedValue(
+        searchHtml([
+          {
+            listing: {
+              listingIdSHA: 'sha-leesburg',
+              pageLink: '/homedetails/126-sleeping-bear-ln-leesburg-va/sha-leesburg_lid/',
+              subtitles: ['126 Sleeping Bear Ln', 'Leesburg, VA'],
+            },
+          },
+        ])
+      );
+      const r = await harness.callTool('compass_resolve_addresses', {
+        addresses: [{ address: '126 Sleeping Bear Ln', city: 'Lee', state: 'VA' }],
+      });
+      const parsed = parseToolResult<{
+        rows: Array<{ resolved: boolean; url?: string }>;
+      }>(r);
+      expect(parsed.rows[0].resolved).toBe(false);
+      expect(parsed.rows[0].url).toBeUndefined();
+    });
+
+    it('partitions identically to N parallel single calls', async () => {
+      // Pin the parity contract: `compass_resolve_addresses(set)` must
+      // partition resolved/unresolved identically to calling
+      // `compass_get_by_address` once per input. Mock the upstream
+      // deterministically so the only variable is the in-process match
+      // policy.
+      const fixtures: Record<string, unknown[]> = {
+        // Clean match.
+        '126 Sleeping Bear Ln Lake Lure NC': [
+          {
+            listing: {
+              listingIdSHA: 'sha-match-1',
+              pageLink: '/homedetails/126-sleeping-bear-ln/sha-match-1_lid/',
+              navigationPageLink: '/listing/126-sleeping-bear-ln/PID1_pid/',
+              subtitles: ['126 Sleeping Bear Ln', 'Lake Lure, NC 28746'],
+            },
+          },
+        ],
+        // Silent-wrong-match (#45): candidate disagrees on city.
+        '500 Different Way Lake Lure NC': [
+          {
+            listing: {
+              listingIdSHA: 'sha-charlotte',
+              pageLink: '/homedetails/1234-tryon-st-charlotte-nc/sha-charlotte_lid/',
+              subtitles: ['1234 Tryon St', 'Charlotte, NC 28202'],
+            },
+          },
+        ],
+        // Prefix collision (#55/#67): "12 Oak St" vs "1234 Oak St".
+        '12 Oak St Dallas TX': [
+          {
+            listing: {
+              listingIdSHA: 'sha-prefix',
+              pageLink: '/homedetails/1234-oak-st/sha-prefix_lid/',
+              subtitles: ['1234 Oak St', 'Dallas, TX'],
+            },
+          },
+        ],
+      };
+      const impl = async (path: string) => {
+        const m = /q=([^&]+)/.exec(path);
+        const q = m ? decodeURIComponent(m[1]) : '';
+        return searchHtml(fixtures[q] ?? []);
+      };
+
+      // Drive the single via its own harness.
+      const singleHarness = await createTestHarness((server) =>
+        registerByAddressTools(server, mockClient)
+      );
+      try {
+        const inputs = [
+          { address: '126 Sleeping Bear Ln', city: 'Lake Lure', state: 'NC' },
+          { address: '500 Different Way', city: 'Lake Lure', state: 'NC' },
+          { address: '12 Oak St', city: 'Dallas', state: 'TX' },
+        ];
+
+        mockFetchHtml.mockImplementation(impl);
+        const singleResults = await Promise.all(
+          inputs.map((i) => singleHarness.callTool('compass_get_by_address', i))
+        );
+        const singleResolved = singleResults.map(
+          (r) => parseToolResult<{ resolved: boolean }>(r).resolved
+        );
+
+        mockFetchHtml.mockImplementation(impl);
+        const bulkResult = await harness.callTool('compass_resolve_addresses', {
+          addresses: inputs,
+        });
+        const bulkRows = parseToolResult<{
+          rows: Array<{ resolved: boolean }>;
+        }>(bulkResult).rows;
+        const bulkResolved = bulkRows.map((r) => r.resolved);
+
+        // The partition must match exactly.
+        expect(bulkResolved).toEqual(singleResolved);
+        // And anchor the expected partition so a future regression in
+        // BOTH paths still fails this test.
+        expect(bulkResolved).toEqual([true, false, false]);
+      } finally {
+        await singleHarness.close();
+      }
+    });
   });
 });
