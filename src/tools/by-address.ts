@@ -5,19 +5,36 @@ import { textResult } from '../mcp.js';
 import { extractUc } from '../page-state.js';
 import { extractPidFromUrl, locationToSlug } from '../url.js';
 import { COMPASS_PAGE_SIZE, findLolResults } from './search.js';
+import {
+  OMNISUGGEST_AUTOCOMPLETE_PATH,
+  buildAutocompleteBody,
+  extractAddressCandidates,
+  type OmnisuggestResponse,
+} from './typeahead.js';
 
 /**
  * `compass_get_by_address` — resolve a free-text street address to the
  * canonical Compass listing identifiers (URL, listing_id_sha, pid).
  *
- * Two-rung walker (issue #71). The shared `resolveOneAddress` helper —
- * also used by `compass_resolve_addresses` per #68 parity — fires
- * rungs in order:
+ * Three-rung walker (issues #71, #78/#79). The shared
+ * `resolveOneAddress` helper — also used by `compass_resolve_addresses`
+ * per #68 parity — fires rungs in order:
  *
+ *   0. typeahead — POST `/api/v3/omnisuggest/autocomplete` with the
+ *      address as structured/joined `q` (issue #78/#79). This is the
+ *      PRIMARY rung: compass.com runs AWS WAF and the SSR free-text
+ *      paths the legacy rungs depend on return 403 to the bridge, so
+ *      they surface zero candidates and the resolver used to report a
+ *      false "no listing matched" for listings Compass actually has.
+ *      The structured endpoint is not WAF-walled. Candidates carry an
+ *      `id` (the `listingIdSHA`) plus a `text`/`subText` address that
+ *      the #45 whole-token verifier checks. Tag `matched_via:
+ *      "typeahead"`. Throws/empties fall through to the SSR rungs.
  *   1. freetext — `/homes-for-sale/?q=<query>` SSR. If the top
  *      candidate's subtitle-encoded address verifies against the query,
  *      lift its `listingIdSHA` + `pageLink` + `navigationPageLink`
- *      and tag `matched_via: "freetext"`.
+ *      and tag `matched_via: "freetext"`. WAF-blocked today; kept as
+ *      fallback in case it recovers.
  *   2. search_fallback — `/homes-for-sale/<locality-slug>/` SSR, page-
  *      walked up to `BY_ADDRESS_FALLBACK_MAX_PAGES`. Same address
  *      verifier. Fires only when the caller supplied enough locality
@@ -177,7 +194,7 @@ export function addressMatchesQuery(
 export { extractPidFromUrl as extractPidFromNavigationPageLink } from '../url.js';
 
 /** Which rung produced a successful resolution. */
-export type MatchedVia = 'freetext' | 'search_fallback';
+export type MatchedVia = 'typeahead' | 'freetext' | 'search_fallback';
 
 interface ByAddressResolved {
   resolved: true;
@@ -279,12 +296,52 @@ async function fetchListings(
 }
 
 /**
+ * Run the structured typeahead rung (issue #78/#79). POSTs the address
+ * to Compass's omnisuggest autocomplete endpoint and shapes each
+ * Addresses candidate into a `RawListingLike` so the shared
+ * `findMatchingListing` verifier + `buildListingUrl` can consume it
+ * unchanged. The candidate's `id` is the `listingIdSHA`; autocomplete
+ * carries no `_pid/`, so we leave `navigationPageLink`/`pageLink` unset
+ * and `buildListingUrl` falls back to the `_lid/` form.
+ *
+ * Returns null on any failure (WAF 403, transport fault, empty) so the
+ * caller falls through to the SSR rungs rather than erroring out.
+ */
+async function fetchTypeaheadCandidates(
+  client: CompassClient,
+  input: ByAddressInput
+): Promise<Array<{ listing?: RawListingLike }> | null> {
+  try {
+    const resp = await client.fetchJson<OmnisuggestResponse>(
+      OMNISUGGEST_AUTOCOMPLETE_PATH,
+      { method: 'POST', body: buildAutocompleteBody(input) }
+    );
+    const candidates = extractAddressCandidates(resp);
+    if (candidates.length === 0) return null;
+    return candidates.map((c) => ({
+      listing: {
+        listingIdSHA: c.id,
+        // Combine text + subText into the subtitle array the verifier
+        // reads (it joins them with ", ").
+        subtitles: [c.text, c.subText].filter(
+          (s): s is string => typeof s === 'string' && s.length > 0
+        ),
+      } satisfies RawListingLike,
+    }));
+  } catch {
+    return null;
+  }
+}
+
+/**
  * Shared rung walker used by both `compass_get_by_address` and
  * `compass_resolve_addresses`. Pins the parity contract from #68 —
  * both routes MUST go through this helper so the rung sequence,
  * match policy, and `matched_via` labeling can't drift.
  *
  * Rungs (in order):
+ *   0. typeahead — POST `/api/v3/omnisuggest/autocomplete` (structured
+ *      address) with `addressMatchesQuery` verify (#78/#79). PRIMARY.
  *   1. freetext — `/homes-for-sale/?q=<query>` with `addressMatchesQuery` verify
  *   2. search_fallback — `/homes-for-sale/<locality-slug>/` page-walked
  *      with the same verify (#71)
@@ -296,6 +353,20 @@ export async function resolveOneAddress(
   | { resolved: true; listing: RawListingLike; matched_via: MatchedVia }
   | { resolved: false; error: string }
 > {
+  // Rung 0: structured typeahead (issue #78/#79) — the primary rung.
+  // Routes around the AWS WAF that 403s the SSR ?q= path below.
+  const typeaheadEntries = await fetchTypeaheadCandidates(client, input);
+  if (typeaheadEntries) {
+    const typeaheadMatch = findMatchingListing(typeaheadEntries, input);
+    if (typeaheadMatch) {
+      return {
+        resolved: true,
+        listing: typeaheadMatch,
+        matched_via: 'typeahead',
+      };
+    }
+  }
+
   // Rung 1: free-text ?q= search.
   const query = buildAddressQuery(input);
   const freetextPath = `/homes-for-sale/?q=${encodeURIComponent(query)}`;
@@ -352,7 +423,7 @@ export function registerByAddressTools(
     {
       title: 'Resolve a Compass listing by street address',
       description:
-        "Resolve a free-text street address to a Compass listing's canonical URL and identifiers in one call. Walks two rungs: first `/homes-for-sale/?q=<address>` (the free-text rung) and — when that returns no verified match — a slug-based search at `/homes-for-sale/<city-state-or-zip>/` (the search-fallback rung, issue #71). Each candidate is verified against the query (case + street-type abbreviation normalization, then whole-token equality, issue #45) before being accepted. Returns `{ url, listing_id_sha, pid, address, resolved, matched_via }` where `matched_via` is `\"freetext\"` or `\"search_fallback\"` so callers can see which rung found the match. When neither rung matches, returns `{ resolved: false, error: \"no listing matched\" }` rather than leaking a wrong URL. The `url` is the stable `_pid/` form when Compass provides a `navigationPageLink` (preferred for trackers/bookmarks — sha URLs go stale on relisting), falling back to the `_lid/` form otherwise. Read-only; safe to call repeatedly.",
+        "Resolve a free-text street address to a Compass listing's canonical URL and identifiers in one call. Walks three rungs: first the structured typeahead `POST /api/v3/omnisuggest/autocomplete` (the primary rung — Compass's address-suggest API, which routes around the AWS WAF that 403s the SSR free-text path, issues #78/#79), then `/homes-for-sale/?q=<address>` (the free-text rung) and — when those return no verified match — a slug-based search at `/homes-for-sale/<city-state-or-zip>/` (the search-fallback rung, issue #71). Each candidate is verified against the query (case + street-type abbreviation normalization, then whole-token equality, issue #45) before being accepted. Returns `{ url, listing_id_sha, pid, address, resolved, matched_via }` where `matched_via` is `\"typeahead\"`, `\"freetext\"`, or `\"search_fallback\"` so callers can see which rung found the match. When no rung matches, returns `{ resolved: false, error: \"no listing matched\" }` rather than leaking a wrong URL. The `url` is the stable `_pid/` form when Compass provides a `navigationPageLink` (preferred for trackers/bookmarks — sha URLs go stale on relisting), falling back to the `_lid/` form otherwise. Read-only; safe to call repeatedly.",
       annotations: {
         title: 'Resolve a Compass listing by street address',
         readOnlyHint: true,

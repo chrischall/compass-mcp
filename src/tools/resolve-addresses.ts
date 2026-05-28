@@ -110,7 +110,7 @@ export function registerResolveAddressesTools(
       description:
         `Resolve up to ${RESOLVE_ADDRESSES_MAX} street addresses to Compass listing URLs in a single call. Returns one row per input, ` +
         'either `{ resolved: true, url, listing_id_sha, pid, address, matched_via }` or `{ resolved: false, error, query }`. ' +
-        "Each row walks the same two rungs as `compass_get_by_address` — first `/homes-for-sale/?q=<address>` (freetext), then `/homes-for-sale/<locality-slug>/` (search_fallback, issue #71) — and verifies candidates against the same whole-token address-match policy (#45). " +
+        "Each row walks the same three rungs as `compass_get_by_address` — first the structured typeahead `POST /api/v3/omnisuggest/autocomplete` (the primary rung that routes around the AWS WAF, issues #78/#79), then `/homes-for-sale/?q=<address>` (freetext), then `/homes-for-sale/<locality-slug>/` (search_fallback, issue #71) — and verifies candidates against the same whole-token address-match policy (#45). " +
         'The `matched_via` field on each resolved row indicates which rung found it. Compass\'s search degrades into far-away top hits when the local market has no match, and bulk amplifies the corruption ' +
         'surface, so a miss returns `resolved: false` with no URL rather than leaking the wrong property. Calls fan out ' +
         'concurrently server-side. Read-only; safe to call repeatedly.',

@@ -10,10 +10,20 @@ import {
 import { createTestHarness, parseToolResult } from '../helpers.js';
 
 const mockFetchHtml = vi.fn();
-const mockClient = { fetchHtml: mockFetchHtml } as unknown as CompassClient;
+const mockFetchJson = vi.fn();
+const mockClient = {
+  fetchHtml: mockFetchHtml,
+  fetchJson: mockFetchJson,
+} as unknown as CompassClient;
 
 let harness: Awaited<ReturnType<typeof createTestHarness>>;
-beforeEach(() => vi.clearAllMocks());
+beforeEach(() => {
+  vi.clearAllMocks();
+  // Default: the structured typeahead rung returns no candidates, so
+  // tests that exercise the SSR fallback rungs keep their existing
+  // assertions. Per-test overrides drive the typeahead rung.
+  mockFetchJson.mockResolvedValue({ categories: [] });
+});
 afterAll(async () => {
   if (harness) await harness.close();
 });
@@ -194,6 +204,212 @@ describe('compass_get_by_address tool', () => {
     };
     return `<html><script>global.uc = ${JSON.stringify(uc)};</script></html>`;
   };
+
+  // Build an omnisuggest autocomplete response (the structured rung).
+  const omnisuggest = (
+    items: Array<{ text: string; subText: string; id: string }>
+  ) => ({
+    categories: [{ name: 1, label: 'Addresses', items }],
+    success: true,
+  });
+
+  describe('#78/#79 structured typeahead rung (primary)', () => {
+    it('resolves via the autocomplete endpoint before any SSR fetch', async () => {
+      mockFetchJson.mockResolvedValueOnce(
+        omnisuggest([
+          {
+            text: '126 Sleeping Bear Ln',
+            subText: 'Lake Lure, NC',
+            id: '1887095624271872617',
+          },
+        ])
+      );
+      const r = await harness.callTool('compass_get_by_address', {
+        address: '126 Sleeping Bear Ln',
+        city: 'Lake Lure',
+        state: 'NC',
+        zip: '28746',
+      });
+      expect(r.isError).toBeFalsy();
+      const parsed = parseToolResult<{
+        resolved: boolean;
+        url: string;
+        listing_id_sha: string;
+        matched_via: string;
+      }>(r);
+      expect(parsed.resolved).toBe(true);
+      expect(parsed.matched_via).toBe('typeahead');
+      expect(parsed.listing_id_sha).toBe('1887095624271872617');
+      // _lid/ URL built from the candidate id (no _pid/ in autocomplete).
+      expect(parsed.url).toBe(
+        'https://www.compass.com/homedetails/1887095624271872617_lid/'
+      );
+      // The structured rung short-circuits the SSR rungs entirely.
+      expect(mockFetchHtml).not.toHaveBeenCalled();
+      // It POSTed to the omnisuggest endpoint.
+      const [calledPath] = mockFetchJson.mock.calls[0];
+      expect(calledPath).toBe('/api/v3/omnisuggest/autocomplete');
+    });
+
+    it('CRITICAL #78: resolves 158 Raven Blvd to its _lid/ URL', async () => {
+      // Real false-negative from the field report — the SSR ?q= rung is
+      // WAF-blocked, so this MUST resolve through the structured rung.
+      mockFetchJson.mockResolvedValueOnce(
+        omnisuggest([
+          {
+            text: '158 Raven Blvd',
+            subText: 'Lake Lure, NC',
+            id: '2029026490125049409',
+          },
+        ])
+      );
+      const r = await harness.callTool('compass_get_by_address', {
+        address: '158 Raven Blvd',
+        city: 'Lake Lure',
+        state: 'NC',
+        zip: '28746',
+      });
+      const parsed = parseToolResult<{
+        resolved: boolean;
+        url: string;
+        listing_id_sha: string;
+        matched_via: string;
+      }>(r);
+      expect(parsed.resolved).toBe(true);
+      expect(parsed.matched_via).toBe('typeahead');
+      expect(parsed.listing_id_sha).toBe('2029026490125049409');
+      expect(parsed.url).toBe(
+        'https://www.compass.com/homedetails/2029026490125049409_lid/'
+      );
+    });
+
+    it('CRITICAL #78: resolves 155 Quail Cove Blvd Unit 1601 to the matching unit', async () => {
+      // Multi-unit building — autocomplete returns several units. The
+      // #45 whole-token verifier must pick the one carrying the "1601"
+      // unit token, not the first candidate.
+      mockFetchJson.mockResolvedValueOnce(
+        omnisuggest([
+          {
+            text: '155 Quail Cove Blvd, Unit 1602',
+            subText: 'Lake Lure, NC',
+            id: '1745067614490786889',
+          },
+          {
+            text: '155 Quail Cove Blvd, Unit 1601',
+            subText: 'Lake Lure, NC',
+            id: '2079951245069150641',
+          },
+        ])
+      );
+      const r = await harness.callTool('compass_get_by_address', {
+        address: '155 Quail Cove Blvd Unit 1601',
+        city: 'Lake Lure',
+        state: 'NC',
+        zip: '28746',
+      });
+      const parsed = parseToolResult<{
+        resolved: boolean;
+        listing_id_sha: string;
+        matched_via: string;
+        url: string;
+      }>(r);
+      expect(parsed.resolved).toBe(true);
+      expect(parsed.matched_via).toBe('typeahead');
+      expect(parsed.listing_id_sha).toBe('2079951245069150641');
+      expect(parsed.url).toBe(
+        'https://www.compass.com/homedetails/2079951245069150641_lid/'
+      );
+    });
+
+    it('CRITICAL #45: rejects a non-matching autocomplete candidate (no silent wrong-match)', async () => {
+      // Even if the typeahead returns a far-away candidate, the
+      // whole-token verifier must reject it rather than leak the URL.
+      mockFetchJson.mockResolvedValueOnce(
+        omnisuggest([
+          {
+            text: '1234 Tryon St, Unit 500',
+            subText: 'Charlotte, NC',
+            id: 'sha-charlotte-condo',
+          },
+        ])
+      );
+      // No SSR fallback match either.
+      mockFetchHtml.mockResolvedValue(searchHtml([]));
+      const r = await harness.callTool('compass_get_by_address', {
+        address: '126 Sleeping Bear Ln',
+        city: 'Lake Lure',
+        state: 'NC',
+        zip: '28746',
+      });
+      const parsed = parseToolResult<{
+        resolved: boolean;
+        url?: string;
+        error?: string;
+      }>(r);
+      expect(parsed.resolved).toBe(false);
+      expect(parsed.url).toBeUndefined();
+      expect(parsed.error).toMatch(/no listing matched/i);
+    });
+
+    it('falls through to the SSR rungs when the autocomplete throws (WAF/transport fault)', async () => {
+      // If the structured rung fails for any reason, the resolver must
+      // degrade to the legacy SSR rungs rather than error out.
+      mockFetchJson.mockRejectedValueOnce(new Error('omnisuggest 403'));
+      mockFetchHtml.mockResolvedValueOnce(
+        searchHtml([
+          {
+            listing: {
+              listingIdSHA: 'sha-ssr',
+              pageLink: '/homedetails/126-sleeping-bear-ln/sha-ssr_lid/',
+              navigationPageLink: '/listing/126-sleeping-bear-ln/SSRPID_pid/',
+              subtitles: ['126 Sleeping Bear Ln', 'Lake Lure, NC 28746'],
+            },
+          },
+        ])
+      );
+      const r = await harness.callTool('compass_get_by_address', {
+        address: '126 Sleeping Bear Ln',
+        city: 'Lake Lure',
+        state: 'NC',
+        zip: '28746',
+      });
+      const parsed = parseToolResult<{
+        resolved: boolean;
+        matched_via: string;
+        listing_id_sha: string;
+      }>(r);
+      expect(parsed.resolved).toBe(true);
+      // SSR ?q= rung carried it after the structured rung threw.
+      expect(parsed.matched_via).toBe('freetext');
+      expect(parsed.listing_id_sha).toBe('sha-ssr');
+    });
+
+    it('falls through to the SSR rungs when autocomplete returns zero candidates', async () => {
+      mockFetchJson.mockResolvedValueOnce({ categories: [] });
+      mockFetchHtml.mockResolvedValueOnce(
+        searchHtml([
+          {
+            listing: {
+              listingIdSHA: 'sha-ssr2',
+              pageLink: '/homedetails/x/sha-ssr2_lid/',
+              subtitles: ['126 Sleeping Bear Ln', 'Lake Lure, NC 28746'],
+            },
+          },
+        ])
+      );
+      const r = await harness.callTool('compass_get_by_address', {
+        address: '126 Sleeping Bear Ln',
+        city: 'Lake Lure',
+        state: 'NC',
+      });
+      const parsed = parseToolResult<{
+        resolved: boolean;
+        matched_via: string;
+      }>(r);
+      expect(parsed.resolved).toBe(true);
+      expect(parsed.matched_via).toBe('freetext');
+    });
+  });
 
   it('searches by address and returns resolved url + listing_id_sha + pid', async () => {
     mockFetchHtml.mockResolvedValueOnce(
