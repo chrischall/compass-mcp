@@ -1,5 +1,10 @@
 import { z } from 'zod';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
+import {
+  BRIDGE_CONCURRENCY,
+  mapWithConcurrency,
+  retryOnceOnTimeout,
+} from '@fetchproxy/server';
 import type { CompassClient } from '../client.js';
 import { textResult } from '../mcp.js';
 import {
@@ -120,10 +125,19 @@ export function registerCompareTools(
     },
     async ({ targets, include_description, include_summary }) => {
       const ts = targets as CompareTarget[];
-      const rows: CompareRow[] = await Promise.all(
-        ts.map(async (t) => {
+      // Bounded fan-out + one-shot timeout retry — same helpers the
+      // bulk-get tool uses (`@fetchproxy/server` 0.9.x). Compare caps
+      // at 25 targets, which is below the BRIDGE_CONCURRENCY=6 risk
+      // window at the top end but well over it. Joining the cohort
+      // cap keeps cross-MCP behavior consistent.
+      const rows: CompareRow[] = await mapWithConcurrency(
+        ts,
+        BRIDGE_CONCURRENCY,
+        async (t) => {
           try {
-            const { listing } = await fetchListingRecord(client, t);
+            const { listing } = await retryOnceOnTimeout(() =>
+              fetchListingRecord(client, t)
+            );
             return {
               listing_id_sha: listing.listingIdSHA,
               url: listing.pageLink
@@ -140,7 +154,7 @@ export function registerCompareTools(
               error: (e as Error).message,
             };
           }
-        })
+        }
       );
       const body: {
         count: number;

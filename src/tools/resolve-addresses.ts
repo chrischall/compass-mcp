@@ -1,5 +1,9 @@
 import { z } from 'zod';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
+import {
+  BRIDGE_CONCURRENCY,
+  mapWithConcurrency,
+} from '@fetchproxy/server';
 import type { CompassClient } from '../client.js';
 import { textResult } from '../mcp.js';
 import { extractPidFromUrl } from '../url.js';
@@ -131,8 +135,13 @@ export function registerResolveAddressesTools(
       },
     },
     async ({ addresses }) => {
-      const rows = await Promise.all(
-        (addresses as ByAddressInput[]).map((a) => resolveOne(client, a))
+      // Bounded fan-out — `@fetchproxy/server` 0.9.x BRIDGE_CONCURRENCY
+      // (=6). The cohort comparison (#78) pinned this cap to keep the
+      // bridge from timing out on resolver round-trips at scale.
+      const rows = await mapWithConcurrency(
+        addresses as ByAddressInput[],
+        BRIDGE_CONCURRENCY,
+        (a) => resolveOne(client, a)
       );
       return textResult({
         count: rows.length,

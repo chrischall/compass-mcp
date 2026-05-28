@@ -133,4 +133,33 @@ describe('compass_bulk_get tool', () => {
     const parsed = parseToolResult<{ count: number }>(r);
     expect(parsed.count).toBe(25);
   });
+
+  it('caps in-flight fetches at BRIDGE_CONCURRENCY (=6)', async () => {
+    // Migration to @fetchproxy/server 0.9.x bulk helpers. Before this
+    // change compass used unbounded Promise.all and could put 100+
+    // requests on the bridge at once; the round-3 #78 comparison
+    // pinned 6 as the safe cohort cap. Track the peak by counting
+    // resolves manually instead of letting Promise resolve immediately.
+    let inflight = 0;
+    let peak = 0;
+    mockFetchHtml.mockImplementation(async () => {
+      inflight++;
+      peak = Math.max(peak, inflight);
+      await new Promise((resolve) => setTimeout(resolve, 5));
+      inflight--;
+      return homedetailsHtml({
+        listingIdSHA: 'x',
+        pageLink: '/x/x_lid/',
+        price: { lastKnown: 1 },
+      });
+    });
+    const targets = Array.from({ length: 20 }, (_, i) => ({
+      url: `/h/${i}_lid/`,
+    }));
+    await harness.callTool('compass_bulk_get', { targets });
+    expect(peak).toBeLessThanOrEqual(6);
+    // Also: peak should actually reach the cap on a 20-target batch —
+    // otherwise the helper isn't engaging at all.
+    expect(peak).toBeGreaterThan(1);
+  });
 });
