@@ -6,10 +6,24 @@ import { registerByAddressTools } from '../../src/tools/by-address.js';
 import { createTestHarness, parseToolResult } from '../helpers.js';
 
 const mockFetchHtml = vi.fn();
-const mockClient = { fetchHtml: mockFetchHtml } as unknown as CompassClient;
+const mockFetchJson = vi.fn();
+const mockClient = {
+  fetchHtml: mockFetchHtml,
+  fetchJson: mockFetchJson,
+} as unknown as CompassClient;
 
 let harness: Awaited<ReturnType<typeof createTestHarness>>;
-beforeEach(() => vi.clearAllMocks());
+beforeEach(() => {
+  vi.clearAllMocks();
+  // Default: structured typeahead rung returns no candidates so the
+  // existing SSR-rung fixtures stay in control. Per-test overrides
+  // drive the typeahead rung.
+  mockFetchJson.mockResolvedValue({ categories: [] });
+});
+
+const omnisuggest = (
+  items: Array<{ text: string; subText: string; id: string }>
+) => ({ categories: [{ name: 1, label: 'Addresses', items }], success: true });
 afterAll(async () => {
   if (harness) await harness.close();
 });
@@ -466,6 +480,151 @@ describe('compass_resolve_addresses tool', () => {
         expect(bulkShape).toEqual([
           { resolved: true, matched_via: 'freetext' },
           { resolved: true, matched_via: 'search_fallback' },
+          { resolved: false, matched_via: undefined },
+        ]);
+      } finally {
+        await singleHarness.close();
+      }
+    });
+  });
+
+  // Issue #78/#79: structured typeahead rung parity. The bulk path must
+  // resolve via the omnisuggest autocomplete endpoint as its primary
+  // rung, identically to the single path, and surface
+  // matched_via: "typeahead".
+  describe('#78/#79 structured typeahead rung parity', () => {
+    it('CRITICAL #78: resolves both Lake Lure false-negatives via the typeahead rung', async () => {
+      mockFetchJson.mockImplementation(async (_path: string, init: any) => {
+        const q: string = JSON.parse(JSON.stringify(init.body)).q;
+        if (q.includes('158 Raven')) {
+          return omnisuggest([
+            {
+              text: '158 Raven Blvd',
+              subText: 'Lake Lure, NC',
+              id: '2029026490125049409',
+            },
+          ]);
+        }
+        if (q.includes('155 Quail Cove')) {
+          return omnisuggest([
+            {
+              text: '155 Quail Cove Blvd, Unit 1602',
+              subText: 'Lake Lure, NC',
+              id: '1745067614490786889',
+            },
+            {
+              text: '155 Quail Cove Blvd, Unit 1601',
+              subText: 'Lake Lure, NC',
+              id: '2079951245069150641',
+            },
+          ]);
+        }
+        return { categories: [] };
+      });
+
+      const r = await harness.callTool('compass_resolve_addresses', {
+        addresses: [
+          { address: '158 Raven Blvd', city: 'Lake Lure', state: 'NC', zip: '28746' },
+          {
+            address: '155 Quail Cove Blvd Unit 1601',
+            city: 'Lake Lure',
+            state: 'NC',
+            zip: '28746',
+          },
+        ],
+      });
+      const parsed = parseToolResult<{
+        rows: Array<{
+          resolved: boolean;
+          matched_via?: string;
+          listing_id_sha?: string;
+          url?: string;
+        }>;
+      }>(r);
+      expect(parsed.rows[0].resolved).toBe(true);
+      expect(parsed.rows[0].matched_via).toBe('typeahead');
+      expect(parsed.rows[0].listing_id_sha).toBe('2029026490125049409');
+      expect(parsed.rows[0].url).toBe(
+        'https://www.compass.com/homedetails/2029026490125049409_lid/'
+      );
+      expect(parsed.rows[1].resolved).toBe(true);
+      expect(parsed.rows[1].matched_via).toBe('typeahead');
+      expect(parsed.rows[1].listing_id_sha).toBe('2079951245069150641');
+      // Never hits the SSR rungs when typeahead resolves.
+      expect(mockFetchHtml).not.toHaveBeenCalled();
+    });
+
+    it('CRITICAL parity: bulk partitions identically to single across all three rungs', async () => {
+      // Row A → typeahead hit; Row B → typeahead empty, SSR ?q= hit;
+      // Row C → all rungs empty (unresolved). Bulk + single must agree.
+      const jsonImpl = async (_path: string, init: any) => {
+        const q: string = JSON.parse(JSON.stringify(init.body)).q;
+        if (q.includes('158 Raven')) {
+          return omnisuggest([
+            {
+              text: '158 Raven Blvd',
+              subText: 'Lake Lure, NC',
+              id: 'sha-ta',
+            },
+          ]);
+        }
+        return { categories: [] };
+      };
+      const htmlImpl = async (path: string) => {
+        if (path.startsWith('/homes-for-sale/?q=')) {
+          const m = /q=([^&]+)/.exec(path);
+          const qq = m ? decodeURIComponent(m[1]) : '';
+          if (qq.includes('500 Main')) {
+            return searchHtml([
+              {
+                listing: {
+                  listingIdSHA: 'sha-ft',
+                  pageLink: '/homedetails/500-main-st/sha-ft_lid/',
+                  subtitles: ['500 Main St', 'Asheville, NC'],
+                },
+              },
+            ]);
+          }
+        }
+        return searchHtml([]);
+      };
+
+      const inputs = [
+        { address: '158 Raven Blvd', city: 'Lake Lure', state: 'NC' },
+        { address: '500 Main St', city: 'Asheville', state: 'NC' },
+        { address: '999 Nowhere Rd', city: 'Atlantis', state: 'XX' },
+      ];
+
+      const singleHarness = await createTestHarness((server) =>
+        registerByAddressTools(server, mockClient)
+      );
+      try {
+        mockFetchJson.mockImplementation(jsonImpl);
+        mockFetchHtml.mockImplementation(htmlImpl);
+        const singleResults = await Promise.all(
+          inputs.map((i) => singleHarness.callTool('compass_get_by_address', i))
+        );
+        const singleShape = singleResults.map((r) => {
+          const p = parseToolResult<{ resolved: boolean; matched_via?: string }>(r);
+          return { resolved: p.resolved, matched_via: p.matched_via };
+        });
+
+        mockFetchJson.mockImplementation(jsonImpl);
+        mockFetchHtml.mockImplementation(htmlImpl);
+        const bulkResult = await harness.callTool('compass_resolve_addresses', {
+          addresses: inputs,
+        });
+        const bulkShape = parseToolResult<{
+          rows: Array<{ resolved: boolean; matched_via?: string }>;
+        }>(bulkResult).rows.map((r) => ({
+          resolved: r.resolved,
+          matched_via: r.matched_via,
+        }));
+
+        expect(bulkShape).toEqual(singleShape);
+        expect(bulkShape).toEqual([
+          { resolved: true, matched_via: 'typeahead' },
+          { resolved: true, matched_via: 'freetext' },
           { resolved: false, matched_via: undefined },
         ]);
       } finally {
