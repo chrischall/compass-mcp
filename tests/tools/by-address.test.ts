@@ -569,6 +569,23 @@ describe('compass_get_by_address tool', () => {
       expect(mockFetchHtml).toHaveBeenCalledTimes(1);
     });
 
+    it('skips the slug rung when only state is supplied (too broad)', async () => {
+      // State-only locality would slug to a state-wide page-walk
+      // (e.g. /homes-for-sale/nc/) — too broad for the verifier's
+      // street-token-only guard. PR description says fallback is
+      // skipped when no usable locality is supplied; treat bare
+      // state the same as bare address.
+      mockFetchHtml.mockResolvedValueOnce(searchHtml([]));
+      const r = await harness.callTool('compass_get_by_address', {
+        address: '126 Sleeping Bear Ln',
+        state: 'NC',
+      });
+      const parsed = parseToolResult<{ resolved: boolean }>(r);
+      expect(parsed.resolved).toBe(false);
+      // Only the ?q= rung fires — no state-wide fan-out.
+      expect(mockFetchHtml).toHaveBeenCalledTimes(1);
+    });
+
     it('CRITICAL #45 parity: slug rung honors whole-token equality (rejects prefix collisions)', async () => {
       mockFetchHtml.mockResolvedValueOnce(searchHtml([])); // ?q= empty
       mockFetchHtml.mockResolvedValueOnce(

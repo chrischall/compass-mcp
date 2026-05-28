@@ -223,7 +223,14 @@ interface RawListingLike {
  *   1. `city, state` (e.g. "Lake Lure, NC" → "lake-lure-nc")
  *   2. `zip`         (e.g. "28746"        → "28746")
  *   3. `city`        (e.g. "Lake Lure"    → "lake-lure")
- *   4. `state`       (e.g. "NC"           → "nc")
+ *
+ * State-only inputs deliberately skip this rung — slugging to bare
+ * `nc` would fan out 5 pages of state-wide SSR fetches, and the
+ * verifier (`addressMatchesQuery`) gates its city/zip checks on
+ * presence, so a state-only query reduces to street-token equality
+ * against every house in the state. Too thin a guard. (Matches the
+ * homes-mcp #50 fix that dropped both city-only and state-only as
+ * too-broad.)
  *
  * The slug rung deliberately omits a price band — that's the follow-up
  * in #70.
@@ -236,7 +243,6 @@ export function buildFallbackSlugPath(
   if (city && state) locality = `${city}, ${state}`;
   else if (zip) locality = zip;
   else if (city) locality = city;
-  else if (state) locality = state;
   if (!locality) return null;
   const slug = locationToSlug(locality);
   if (!slug) return null;
