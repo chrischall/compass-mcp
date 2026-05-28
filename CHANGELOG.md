@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.9.0](https://github.com/chrischall/compass-mcp/compare/v0.8.0...v0.9.0) (2026-05-28)
+
+
+### Features
+
+* **resolve:** add search-fallback rung (closes [#71](https://github.com/chrischall/compass-mcp/issues/71)) ([#74](https://github.com/chrischall/compass-mcp/issues/74)) ([3658ac2](https://github.com/chrischall/compass-mcp/commit/3658ac2232cab3de3b359a37565d01dd3086b3cf))
+
+
+### Bug Fixes
+
+* **resolve:** bulk should run same rungs as single (closes [#67](https://github.com/chrischall/compass-mcp/issues/67)) ([#68](https://github.com/chrischall/compass-mcp/issues/68)) ([f5c3f12](https://github.com/chrischall/compass-mcp/commit/f5c3f124768fe77c04e750fa70cac14bb72cb2cc))
+
 ## [0.8.0](https://github.com/chrischall/compass-mcp/compare/v0.7.0...v0.8.0) (2026-05-27)
 
 
