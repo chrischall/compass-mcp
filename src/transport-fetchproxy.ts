@@ -14,6 +14,9 @@
 // The *resolved* values come back through `inner.bridgeHealth()`, so we
 // no longer track a local mirror of `fetchTimeoutMs` here — `status()`
 // reads it straight off the health snapshot (fetchproxy#82).
+//
+// 0.10.0: `keepAliveIntervalMs` is now 25_000 by default (fetchproxy#71)
+// — exactly what we used to hardcode — so we drop the explicit option.
 
 import {
   FetchproxyServer,
@@ -23,6 +26,7 @@ import type {
   BridgeStatus,
   FetchInit,
   FetchResult,
+  RequestJsonResult,
   CompassTransport,
 } from './transport.js';
 
@@ -65,12 +69,13 @@ export class FetchproxyTransport implements CompassTransport {
       version: opts.version,
       // Subdomains of compass.com (www, photos, etc.) match automatically.
       domains: ['compass.com'],
-      // fetchproxy#71 — keep SW resident across human-paced session gaps.
-      // 0.9.0 still defaults this off; promoted to default in 0.10.0.
-      keepAliveIntervalMs: 25_000,
-      // fetchTimeoutMs / bridgeReviveDelayMs default to 30_000 / 2_000 in
-      // 0.9.0, matching what we'd otherwise hardcode — only forward when
-      // the caller overrides.
+      // keepAliveIntervalMs (fetchproxy#71 — keep SW resident across
+      // human-paced session gaps) defaults to 25_000 as of 0.10.0, so we
+      // no longer pass it explicitly: the 0.10.0 default is exactly the
+      // value compass was hardcoding, making this behavior-preserving.
+      // fetchTimeoutMs / bridgeReviveDelayMs default to 30_000 / 2_000,
+      // matching what we'd otherwise hardcode — only forward when the
+      // caller overrides.
       ...(opts.fetchTimeoutMs !== undefined
         ? { fetchTimeoutMs: opts.fetchTimeoutMs }
         : {}),
@@ -129,5 +134,37 @@ export class FetchproxyTransport implements CompassTransport {
       body: init.body,
     });
     return { status: response.status, body: response.body, url: response.url };
+  }
+
+  async requestJson<T>(
+    path: string,
+    init: {
+      method?: 'GET' | 'POST' | 'PUT' | 'DELETE';
+      headers?: Record<string, string>;
+      body?: unknown;
+    } = {}
+  ): Promise<RequestJsonResult<T>> {
+    // 0.10.0+: `inner.requestJson()` owns serialization, header-defaults
+    // (Accept: application/json; Content-Type for non-GET-with-body),
+    // 204 → null handling, and JSON.parse. It returns BOTH the parsed
+    // `data` and the raw `result` (any HTTP status) and throws the same
+    // typed bridge errors as `request()` on transport failure — so the
+    // client's per-site `throwIfNotOk` / `throwIfSignInPage` guards stay
+    // exactly where they were, just running over `result`. `subdomain`
+    // applies only to relative paths; absolute paths self-describe their
+    // host, so always passing `subdomain: 'www'` is safe (see fetch()).
+    const { data, result } = await this.inner.requestJson<T>(
+      init.method ?? 'POST',
+      path,
+      {
+        subdomain: 'www',
+        headers: init.headers,
+        body: init.body,
+      }
+    );
+    return {
+      data,
+      result: { status: result.status, body: result.body, url: result.url },
+    };
   }
 }

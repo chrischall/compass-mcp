@@ -19,6 +19,46 @@ function stubTransport(
     start: vi.fn().mockResolvedValue(undefined),
     close: vi.fn().mockResolvedValue(undefined),
     fetch: vi.fn().mockImplementation(handler),
+    // Mirror the fetchproxy 0.10.0 `requestJson` envelope over the same
+    // handler: build the FetchInit (Accept + Content-Type defaults,
+    // JSON.stringify the body), call the handler, then parse + 204→null.
+    // This keeps the fetchJson tests exercising the real serialization
+    // contract the client relies on.
+    requestJson: vi
+      .fn()
+      .mockImplementation(
+        async (
+          path: string,
+          init: {
+            method?: 'GET' | 'POST' | 'PUT' | 'DELETE';
+            headers?: Record<string, string>;
+            body?: unknown;
+          } = {}
+        ) => {
+          const method = init.method ?? 'POST';
+          const fetchInit: FetchInit = {
+            path,
+            method,
+            headers: {
+              Accept: 'application/json',
+              ...(method !== 'GET' && init.body !== undefined
+                ? { 'Content-Type': 'application/json' }
+                : {}),
+              ...(init.headers ?? {}),
+            },
+            body:
+              method === 'GET' || init.body === undefined
+                ? undefined
+                : JSON.stringify(init.body),
+          };
+          const result = await handler(fetchInit);
+          const data =
+            result.status === 204 || result.body === ''
+              ? null
+              : JSON.parse(result.body);
+          return { data, result };
+        }
+      ),
     status: vi.fn().mockReturnValue({
       role: 'host',
       port: 37149,

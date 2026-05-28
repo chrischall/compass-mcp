@@ -16,6 +16,7 @@ type Inner = {
   listen: ReturnType<typeof vi.fn>;
   close: ReturnType<typeof vi.fn>;
   request: ReturnType<typeof vi.fn>;
+  requestJson: ReturnType<typeof vi.fn>;
   bridgeHealth: ReturnType<typeof vi.fn>;
   role: 'host' | 'peer' | null;
 };
@@ -25,6 +26,7 @@ function stubInner(role: 'host' | 'peer' | null = 'host'): Inner {
     listen: vi.fn().mockResolvedValue(undefined),
     close: vi.fn().mockResolvedValue(undefined),
     request: vi.fn(),
+    requestJson: vi.fn(),
     bridgeHealth: vi.fn().mockReturnValue({
       role,
       port: 37149,
@@ -120,6 +122,62 @@ describe('FetchproxyTransport', () => {
     const [, , opts] = inner.request.mock.calls[0];
     expect(opts.headers).toEqual({ 'X-Test': '1' });
     expect(opts.body).toBe('{"k":1}');
+  });
+
+  it('requestJson delegates to inner.requestJson with subdomain: www and returns {data, result}', async () => {
+    const t = new FetchproxyTransport({ version: '0.0.0' });
+    const inner = stubInner();
+    inner.requestJson.mockResolvedValue({
+      data: { n: 42 },
+      result: {
+        ok: true,
+        status: 200,
+        body: '{"n":42}',
+        url: 'https://www.compass.com/api',
+      },
+    });
+    installInner(t, inner);
+
+    const out = await t.requestJson<{ n: number }>('/api', {
+      method: 'POST',
+      headers: { 'X-Test': '1' },
+      body: { n: 42 },
+    });
+    const [method, path, opts] = inner.requestJson.mock.calls[0];
+    expect(method).toBe('POST');
+    expect(path).toBe('/api');
+    expect(opts.subdomain).toBe('www');
+    expect(opts.headers).toEqual({ 'X-Test': '1' });
+    expect(opts.body).toEqual({ n: 42 });
+    expect(out).toEqual({
+      data: { n: 42 },
+      result: {
+        status: 200,
+        body: '{"n":42}',
+        url: 'https://www.compass.com/api',
+      },
+    });
+  });
+
+  it('requestJson defaults method to POST and passes data: null through (204)', async () => {
+    const t = new FetchproxyTransport({ version: '0.0.0' });
+    const inner = stubInner();
+    inner.requestJson.mockResolvedValue({
+      data: null,
+      result: {
+        ok: true,
+        status: 204,
+        body: '',
+        url: 'https://www.compass.com/api',
+      },
+    });
+    installInner(t, inner);
+
+    const out = await t.requestJson('/api', { body: {} });
+    const [method] = inner.requestJson.mock.calls[0];
+    expect(method).toBe('POST');
+    expect(out.data).toBeNull();
+    expect(out.result.status).toBe(204);
   });
 
   it('propagates FetchproxyBridgeDownError thrown by inner.request()', async () => {
@@ -249,7 +307,9 @@ describe('FetchproxyTransport', () => {
     expect(inner.close).toHaveBeenCalledTimes(1);
   });
 
-  it('passes keepAliveIntervalMs: 25_000 to FetchproxyServer (fetchproxy#71 — keep SW resident across human-paced session gaps)', async () => {
+  it('does NOT pass keepAliveIntervalMs explicitly — relies on the 0.10.0 default of 25_000 (fetchproxy#71)', async () => {
+    // 0.10.0 promoted keepAliveIntervalMs to a 25_000 default (the value
+    // compass had been hardcoding), so the adapter no longer forwards it.
     // Use vi.doMock to swap in a capturing FetchproxyServer subclass,
     // then dynamically re-import FetchproxyTransport so its module-scope
     // binding resolves to the patched class.
@@ -274,7 +334,7 @@ describe('FetchproxyTransport', () => {
     new PatchedTransport({ version: '1.2.3' });
 
     expect(seen).toHaveLength(1);
-    expect(seen[0].keepAliveIntervalMs).toBe(25_000);
+    expect(seen[0]).not.toHaveProperty('keepAliveIntervalMs');
 
     vi.doUnmock('@fetchproxy/server');
     vi.resetModules();
