@@ -127,9 +127,9 @@ export function registerCompareTools(
       const ts = targets as CompareTarget[];
       // Bounded fan-out + one-shot timeout retry — same helpers the
       // bulk-get tool uses (`@fetchproxy/server` 0.9.x). Compare caps
-      // at 25 targets, which is below the BRIDGE_CONCURRENCY=6 risk
-      // window at the top end but well over it. Joining the cohort
-      // cap keeps cross-MCP behavior consistent.
+      // at 25 targets; that's well above BRIDGE_CONCURRENCY=6, so the
+      // bounded fan-out still bites on realistic batches. Joining the
+      // cohort cap keeps cross-MCP behavior consistent.
       const rows: CompareRow[] = await mapWithConcurrency(
         ts,
         BRIDGE_CONCURRENCY,

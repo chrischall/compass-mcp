@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterAll } from 'vitest';
+import { FetchproxyTimeoutError } from '@fetchproxy/server';
 import type { CompassClient } from '../../src/client.js';
 import { registerResolveAddressesTools } from '../../src/tools/resolve-addresses.js';
 import { registerByAddressTools } from '../../src/tools/by-address.js';
@@ -147,6 +148,48 @@ describe('compass_resolve_addresses tool', () => {
     expect(parsed.rows[1].resolved).toBe(false);
     expect(parsed.rows[1].error).toMatch(/upstream fault/);
     expect(parsed.rows[2].resolved).toBe(true);
+  });
+
+  it('retries once on FetchproxyTimeoutError before committing to resolved:false', async () => {
+    // Parity with bulk-get / compare: a single bridge timeout on a
+    // stale rotating tab usually succeeds on the second attempt. The
+    // `retryOnceOnTimeout` wrapper must fire BEFORE the per-row catch
+    // would otherwise turn the timeout into `resolved: false`, or the
+    // wrapper is a no-op.
+    let attempts = 0;
+    mockFetchHtml.mockImplementation(async () => {
+      attempts++;
+      if (attempts === 1) {
+        throw new FetchproxyTimeoutError({
+          url: 'https://www.compass.com/homes-for-sale/?q=...',
+          timeoutMs: 25,
+          elapsedMs: 28,
+          role: 'peer',
+          port: 37200,
+        });
+      }
+      return searchHtml([
+        {
+          listing: {
+            listingIdSHA: 'sha-retry',
+            pageLink: '/homedetails/126-sleeping-bear-ln/sha-retry_lid/',
+            subtitles: ['126 Sleeping Bear Ln', 'Lake Lure, NC 28746'],
+          },
+        },
+      ]);
+    });
+
+    const r = await harness.callTool('compass_resolve_addresses', {
+      addresses: [
+        { address: '126 Sleeping Bear Ln', city: 'Lake Lure', state: 'NC' },
+      ],
+    });
+    const parsed = parseToolResult<{
+      rows: Array<{ resolved: boolean; listing_id_sha?: string; error?: string }>;
+    }>(r);
+    expect(attempts).toBe(2);
+    expect(parsed.rows[0].resolved).toBe(true);
+    expect(parsed.rows[0].listing_id_sha).toBe('sha-retry');
   });
 
   // Issue #67: bulk vs single resolver parity audit.

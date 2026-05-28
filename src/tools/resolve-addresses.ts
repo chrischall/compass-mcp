@@ -3,6 +3,7 @@ import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import {
   BRIDGE_CONCURRENCY,
   mapWithConcurrency,
+  retryOnceOnTimeout,
 } from '@fetchproxy/server';
 import type { CompassClient } from '../client.js';
 import { textResult } from '../mcp.js';
@@ -64,7 +65,14 @@ async function resolveOne(
 ): Promise<RowResult> {
   const query = buildAddressQuery(input);
   try {
-    const outcome = await resolveOneAddress(client, input);
+    // `retryOnceOnTimeout` mirrors the bulk-get / compare paths
+    // (`@fetchproxy/server` 0.9.x). A single timeout on a stale
+    // rotating tab usually succeeds on the second attempt, so we buy
+    // the retry back before the catch below would otherwise commit it
+    // to `resolved: false`.
+    const outcome = await retryOnceOnTimeout(() =>
+      resolveOneAddress(client, input)
+    );
     if (!outcome.resolved) {
       return { resolved: false, error: outcome.error, query };
     }
@@ -137,7 +145,9 @@ export function registerResolveAddressesTools(
     async ({ addresses }) => {
       // Bounded fan-out — `@fetchproxy/server` 0.9.x BRIDGE_CONCURRENCY
       // (=6). The cohort comparison (#78) pinned this cap to keep the
-      // bridge from timing out on resolver round-trips at scale.
+      // bridge from timing out on resolver round-trips at scale. The
+      // one-shot timeout retry sits inside `resolveOne` (before the
+      // per-row catch swallows it into `resolved: false`).
       const rows = await mapWithConcurrency(
         addresses as ByAddressInput[],
         BRIDGE_CONCURRENCY,
