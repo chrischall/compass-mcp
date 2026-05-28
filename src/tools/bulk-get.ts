@@ -1,5 +1,10 @@
 import { z } from 'zod';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
+import {
+  BRIDGE_CONCURRENCY,
+  mapWithConcurrency,
+  retryOnceOnTimeout,
+} from '@fetchproxy/server';
 import type { CompassClient } from '../client.js';
 import { textResult } from '../mcp.js';
 import {
@@ -98,14 +103,25 @@ export function registerBulkGetTools(
     },
     async ({ targets, include_description }) => {
       const ts = targets as BulkGetTarget[];
-      const rows: BulkGetRow[] = await Promise.all(
-        ts.map(async (t) => {
+      // Bounded fan-out + one-shot timeout retry — hoisted from
+      // @fetchproxy/server 0.9.x. Unbounded Promise.all over 100+
+      // targets was empirically slamming the bridge (round-3 #78
+      // observed Zillow timing out 7-of-20 at unlimited concurrency,
+      // 20-of-20 clean at 6); compass joins the same cap. The retry
+      // wrapper buys back the rotating-tab tax — a single timeout on
+      // a stale tab usually succeeds on the second attempt.
+      const rows: BulkGetRow[] = await mapWithConcurrency(
+        ts,
+        BRIDGE_CONCURRENCY,
+        async (t) => {
           const row: BulkGetRow = {
             listing_id_sha: t.listing_id_sha,
             url: t.url,
           };
           try {
-            const { listing } = await fetchListingRecord(client, t);
+            const { listing } = await retryOnceOnTimeout(() =>
+              fetchListingRecord(client, t)
+            );
             row.listing_id_sha = listing.listingIdSHA;
             row.url = listing.pageLink
               ? `https://www.compass.com${listing.pageLink}`
@@ -117,7 +133,7 @@ export function registerBulkGetTools(
             row.error = e instanceof Error ? e.message : String(e);
           }
           return row;
-        })
+        }
       );
       return textResult({
         count: rows.length,
