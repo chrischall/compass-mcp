@@ -11,6 +11,9 @@
 //
 // 0.9.0: `fetchTimeoutMs` (30_000) and `bridgeReviveDelayMs` (2_000)
 // are server defaults — we only forward them when the caller overrides.
+// The *resolved* values come back through `inner.bridgeHealth()`, so we
+// no longer track a local mirror of `fetchTimeoutMs` here — `status()`
+// reads it straight off the health snapshot (fetchproxy#82).
 
 import {
   FetchproxyServer,
@@ -31,9 +34,6 @@ export {
 } from '@fetchproxy/server';
 
 const DEFAULT_PORT = 37_149;
-// Matches the server default; surfaced through `status()` so
-// compass_healthcheck still reports the timer the bridge is using.
-const DEFAULT_FETCH_TIMEOUT_MS = 30_000;
 
 export interface FetchproxyTransportOptions {
   port?: number;
@@ -55,12 +55,10 @@ export class FetchproxyTransport implements CompassTransport {
   private readonly inner: FetchproxyServer;
   private readonly port: number;
   private readonly serverVersion: string;
-  private readonly fetchTimeoutMs: number;
 
   constructor(opts: FetchproxyTransportOptions) {
     this.port = opts.port ?? DEFAULT_PORT;
     this.serverVersion = opts.version;
-    this.fetchTimeoutMs = opts.fetchTimeoutMs ?? DEFAULT_FETCH_TIMEOUT_MS;
     const options: FetchproxyServerOpts = {
       port: this.port,
       serverName: opts.server ?? 'compass-mcp',
@@ -98,7 +96,9 @@ export class FetchproxyTransport implements CompassTransport {
 
   /**
    * Diagnostic snapshot of the bridge. Wraps `inner.bridgeHealth()`
-   * with this adapter's server-version + configured timeout.
+   * with this adapter's server-version. `fetchTimeoutMs` is sourced
+   * directly from the health snapshot — the server is the source of
+   * truth for the resolved timer value (fetchproxy#82).
    */
   status(): BridgeStatus {
     const h = this.inner.bridgeHealth();
@@ -106,7 +106,7 @@ export class FetchproxyTransport implements CompassTransport {
       role: h.role,
       port: this.port,
       serverVersion: this.serverVersion,
-      fetchTimeoutMs: this.fetchTimeoutMs,
+      fetchTimeoutMs: h.fetchTimeoutMs,
       lastSuccessAt: h.lastSuccessAt,
       lastFailureAt: h.lastFailureAt,
       lastFailureReason: h.lastFailureReason,
