@@ -387,4 +387,285 @@ describe('compass_get_by_address tool', () => {
     );
     expect(parsed.pid).toBeUndefined();
   });
+
+  describe('matched_via surfacing (issue #71)', () => {
+    it('surfaces matched_via: "freetext" when the ?q= rung matches', async () => {
+      mockFetchHtml.mockResolvedValueOnce(
+        searchHtml([
+          {
+            listing: {
+              listingIdSHA: 'sha-freetext',
+              pageLink: '/homedetails/126-sleeping-bear-ln/sha-freetext_lid/',
+              navigationPageLink: '/listing/126-sleeping-bear-ln/PIDFT_pid/',
+              subtitles: ['126 Sleeping Bear Ln', 'Lake Lure, NC 28746'],
+            },
+          },
+        ])
+      );
+      const r = await harness.callTool('compass_get_by_address', {
+        address: '126 Sleeping Bear Ln',
+        city: 'Lake Lure',
+        state: 'NC',
+        zip: '28746',
+      });
+      const parsed = parseToolResult<{
+        resolved: boolean;
+        matched_via?: string;
+      }>(r);
+      expect(parsed.resolved).toBe(true);
+      expect(parsed.matched_via).toBe('freetext');
+      // Only one fetch — no fallback needed.
+      expect(mockFetchHtml).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  describe('#71 search-fallback rung', () => {
+    it('falls through to slug-based search when ?q= returns no candidates', async () => {
+      // First call: the ?q= rung returns empty.
+      mockFetchHtml.mockResolvedValueOnce(searchHtml([]));
+      // Second call: the slug-based search returns 1 hit that matches.
+      mockFetchHtml.mockResolvedValueOnce(
+        searchHtml([
+          {
+            listing: {
+              listingIdSHA: 'sha-fallback',
+              pageLink: '/homedetails/126-sleeping-bear-ln-lake-lure-nc/sha-fallback_lid/',
+              navigationPageLink: '/listing/126-sleeping-bear-ln-lake-lure-nc/PIDFB_pid/',
+              subtitles: ['126 Sleeping Bear Ln', 'Lake Lure, NC 28746'],
+            },
+          },
+        ])
+      );
+      const r = await harness.callTool('compass_get_by_address', {
+        address: '126 Sleeping Bear Ln',
+        city: 'Lake Lure',
+        state: 'NC',
+        zip: '28746',
+      });
+      expect(r.isError).toBeFalsy();
+      const parsed = parseToolResult<{
+        resolved: boolean;
+        matched_via?: string;
+        listing_id_sha?: string;
+        pid?: string;
+      }>(r);
+      expect(parsed.resolved).toBe(true);
+      expect(parsed.matched_via).toBe('search_fallback');
+      expect(parsed.listing_id_sha).toBe('sha-fallback');
+      expect(parsed.pid).toBe('PIDFB');
+      // The second call must hit a slug-based search path, not ?q=.
+      expect(mockFetchHtml).toHaveBeenCalledTimes(2);
+      const fallbackPath = mockFetchHtml.mock.calls[1][0] as string;
+      expect(fallbackPath).toMatch(/^\/homes-for-sale\/[a-z0-9-]+\/?$/);
+      expect(fallbackPath).not.toContain('?q=');
+    });
+
+    it('falls back to slug search when ?q= returns non-matching candidates (#45 + #71)', async () => {
+      // ?q= rung degrades into a Charlotte condo top hit — the address
+      // verifier rejects it, then we fall through to the slug rung,
+      // which carries the correct listing.
+      mockFetchHtml.mockResolvedValueOnce(
+        searchHtml([
+          {
+            listing: {
+              listingIdSHA: 'sha-charlotte',
+              pageLink: '/homedetails/1234-tryon-st-charlotte-nc/sha-charlotte_lid/',
+              subtitles: ['1234 Tryon St #500', 'Charlotte, NC 28202'],
+            },
+          },
+        ])
+      );
+      mockFetchHtml.mockResolvedValueOnce(
+        searchHtml([
+          {
+            listing: {
+              listingIdSHA: 'sha-slug-match',
+              pageLink: '/homedetails/126-sleeping-bear-ln/sha-slug-match_lid/',
+              navigationPageLink: '/listing/126-sleeping-bear-ln/SLUGPID_pid/',
+              subtitles: ['126 Sleeping Bear Ln', 'Lake Lure, NC 28746'],
+            },
+          },
+        ])
+      );
+      const r = await harness.callTool('compass_get_by_address', {
+        address: '126 Sleeping Bear Ln',
+        city: 'Lake Lure',
+        state: 'NC',
+        zip: '28746',
+      });
+      const parsed = parseToolResult<{
+        resolved: boolean;
+        matched_via?: string;
+        listing_id_sha?: string;
+      }>(r);
+      expect(parsed.resolved).toBe(true);
+      expect(parsed.matched_via).toBe('search_fallback');
+      expect(parsed.listing_id_sha).toBe('sha-slug-match');
+    });
+
+    it('uses {city, state} slug when both are present', async () => {
+      mockFetchHtml.mockResolvedValueOnce(searchHtml([]));
+      mockFetchHtml.mockResolvedValueOnce(searchHtml([]));
+      await harness.callTool('compass_get_by_address', {
+        address: '126 Sleeping Bear Ln',
+        city: 'Lake Lure',
+        state: 'NC',
+        zip: '28746',
+      });
+      const fallbackPath = mockFetchHtml.mock.calls[1][0] as string;
+      // locationToSlug("Lake Lure, NC") → "lake-lure-nc"
+      expect(fallbackPath).toContain('/homes-for-sale/lake-lure-nc/');
+    });
+
+    it('falls back to ZIP-only slug when city is missing', async () => {
+      mockFetchHtml.mockResolvedValueOnce(searchHtml([]));
+      mockFetchHtml.mockResolvedValueOnce(searchHtml([]));
+      await harness.callTool('compass_get_by_address', {
+        address: '999 Far Out Rd',
+        state: 'NC',
+        zip: '28746',
+      });
+      const fallbackPath = mockFetchHtml.mock.calls[1][0] as string;
+      expect(fallbackPath).toContain('/homes-for-sale/28746/');
+    });
+
+    it('returns resolved:false when neither rung matches', async () => {
+      mockFetchHtml.mockResolvedValueOnce(searchHtml([]));
+      mockFetchHtml.mockResolvedValueOnce(
+        searchHtml([
+          {
+            listing: {
+              listingIdSHA: 'sha-wrong',
+              pageLink: '/homedetails/wrong/sha-wrong_lid/',
+              subtitles: ['100 Unrelated St', 'Lake Lure, NC 28746'],
+            },
+          },
+        ])
+      );
+      const r = await harness.callTool('compass_get_by_address', {
+        address: '126 Sleeping Bear Ln',
+        city: 'Lake Lure',
+        state: 'NC',
+        zip: '28746',
+      });
+      const parsed = parseToolResult<{
+        resolved: boolean;
+        error?: string;
+      }>(r);
+      expect(parsed.resolved).toBe(false);
+      expect(parsed.error).toMatch(/no listing matched/i);
+    });
+
+    it('skips the slug rung when there is no locality to slugify', async () => {
+      // Bare address with no city/state/zip — slug rung has nothing to
+      // anchor on, so we don't fan out.
+      mockFetchHtml.mockResolvedValueOnce(searchHtml([]));
+      const r = await harness.callTool('compass_get_by_address', {
+        address: '126 Sleeping Bear Ln',
+      });
+      const parsed = parseToolResult<{ resolved: boolean }>(r);
+      expect(parsed.resolved).toBe(false);
+      // Only the ?q= rung fires.
+      expect(mockFetchHtml).toHaveBeenCalledTimes(1);
+    });
+
+    it('CRITICAL #45 parity: slug rung honors whole-token equality (rejects prefix collisions)', async () => {
+      mockFetchHtml.mockResolvedValueOnce(searchHtml([])); // ?q= empty
+      mockFetchHtml.mockResolvedValueOnce(
+        searchHtml([
+          {
+            listing: {
+              listingIdSHA: 'sha-prefix-slug',
+              pageLink: '/homedetails/1234-oak-st-dallas-tx/sha-prefix-slug_lid/',
+              subtitles: ['1234 Oak St', 'Dallas, TX'],
+            },
+          },
+        ])
+      );
+      const r = await harness.callTool('compass_get_by_address', {
+        address: '12 Oak St',
+        city: 'Dallas',
+        state: 'TX',
+      });
+      const parsed = parseToolResult<{
+        resolved: boolean;
+        url?: string;
+      }>(r);
+      // "12 Oak St" must NOT match "1234 Oak St" — the #45 whole-token
+      // guard must hold on the fallback rung just like on rung 1.
+      expect(parsed.resolved).toBe(false);
+      expect(parsed.url).toBeUndefined();
+    });
+
+    it('page-walks slug results when first page has no match but second does', async () => {
+      mockFetchHtml.mockResolvedValueOnce(searchHtml([])); // ?q= empty
+      // Page 1: 5 entries, none match (full page → keep walking).
+      const page1Entries = Array.from({ length: 5 }, (_, i) => ({
+        listing: {
+          listingIdSHA: `sha-p1-${i}`,
+          pageLink: `/homedetails/p1-${i}/sha-p1-${i}_lid/`,
+          subtitles: [`${i + 1} Other St`, 'Lake Lure, NC'],
+        },
+      }));
+      mockFetchHtml.mockResolvedValueOnce(searchHtml(page1Entries));
+      // Page 2: includes the match.
+      mockFetchHtml.mockResolvedValueOnce(
+        searchHtml([
+          {
+            listing: {
+              listingIdSHA: 'sha-p2-hit',
+              pageLink: '/homedetails/126-sleeping-bear-ln/sha-p2-hit_lid/',
+              navigationPageLink: '/listing/126-sleeping-bear-ln/P2HIT_pid/',
+              subtitles: ['126 Sleeping Bear Ln', 'Lake Lure, NC 28746'],
+            },
+          },
+        ])
+      );
+      const r = await harness.callTool('compass_get_by_address', {
+        address: '126 Sleeping Bear Ln',
+        city: 'Lake Lure',
+        state: 'NC',
+        zip: '28746',
+      });
+      const parsed = parseToolResult<{
+        resolved: boolean;
+        matched_via?: string;
+        listing_id_sha?: string;
+      }>(r);
+      expect(parsed.resolved).toBe(true);
+      expect(parsed.matched_via).toBe('search_fallback');
+      expect(parsed.listing_id_sha).toBe('sha-p2-hit');
+      // ?q= + page 1 + page 2 = 3 fetches.
+      expect(mockFetchHtml).toHaveBeenCalledTimes(3);
+      // Page 2 must use Compass's /page-2/ canonical path segment.
+      const page2Path = mockFetchHtml.mock.calls[2][0] as string;
+      expect(page2Path).toContain('/page-2/');
+    });
+
+    it('stops slug page-walk when a short page signals exhaustion', async () => {
+      mockFetchHtml.mockResolvedValueOnce(searchHtml([])); // ?q= empty
+      // Short page (<COMPASS_PAGE_SIZE) → exhausted, no further fetch.
+      mockFetchHtml.mockResolvedValueOnce(
+        searchHtml([
+          {
+            listing: {
+              listingIdSHA: 'sha-other',
+              pageLink: '/homedetails/x/sha-other_lid/',
+              subtitles: ['999 Other St', 'Lake Lure, NC'],
+            },
+          },
+        ])
+      );
+      const r = await harness.callTool('compass_get_by_address', {
+        address: '126 Sleeping Bear Ln',
+        city: 'Lake Lure',
+        state: 'NC',
+        zip: '28746',
+      });
+      const parsed = parseToolResult<{ resolved: boolean }>(r);
+      expect(parsed.resolved).toBe(false);
+      // Only 2 fetches: ?q= + one slug page; no /page-2/ because short.
+      expect(mockFetchHtml).toHaveBeenCalledTimes(2);
+    });
+  });
 });

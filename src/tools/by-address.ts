@@ -3,33 +3,47 @@ import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import type { CompassClient } from '../client.js';
 import { textResult } from '../mcp.js';
 import { extractUc } from '../page-state.js';
-import { extractPidFromUrl } from '../url.js';
-import { findLolResults } from './search.js';
+import { extractPidFromUrl, locationToSlug } from '../url.js';
+import { COMPASS_PAGE_SIZE, findLolResults } from './search.js';
 
 /**
  * `compass_get_by_address` — resolve a free-text street address to the
  * canonical Compass listing identifiers (URL, listing_id_sha, pid).
  *
- * Internally this fires a single `/homes-for-sale/?q=<query>` search,
- * takes the top result, and lifts its `listingIdSHA` + `pageLink`
- * (always present) and `navigationPageLink` (the `_pid/` form, when
- * present). The `_pid/` URL is preferred for stable references — sha
- * URLs go stale on relisting (see issue #27).
+ * Two-rung walker (issue #71). The shared `resolveOneAddress` helper —
+ * also used by `compass_resolve_addresses` per #68 parity — fires
+ * rungs in order:
  *
- * Match verification (issue #45). Compass's `?q=...` search degrades
- * into a far-away top hit when the local market has no match — pre-fix
- * the tool was happily returning resolved:true for those hits (e.g.
+ *   1. freetext — `/homes-for-sale/?q=<query>` SSR. If the top
+ *      candidate's subtitle-encoded address verifies against the query,
+ *      lift its `listingIdSHA` + `pageLink` + `navigationPageLink`
+ *      and tag `matched_via: "freetext"`.
+ *   2. search_fallback — `/homes-for-sale/<locality-slug>/` SSR, page-
+ *      walked up to `BY_ADDRESS_FALLBACK_MAX_PAGES`. Same address
+ *      verifier. Fires only when the caller supplied enough locality
+ *      (city/state, ZIP, etc.) to anchor on. Tag `matched_via:
+ *      "search_fallback"`. Round-3 zillow corpus showed this rung
+ *      carries rural/locality-mismatched addresses that the freetext
+ *      rung silently misses.
+ *
+ * Match verification (issue #45). Compass's search degrades into a
+ * far-away top hit when the local market has no match — pre-fix the
+ * tool was happily returning resolved:true for those hits (e.g.
  * "126 Sleeping Bear Ln, Lake Lure, NC 28746" silently resolving to a
- * Charlotte condo). Every candidate is now validated against the query
- * (case + abbreviation normalization, then substring/token check); if
- * no candidate matches the tool returns resolved:false rather than
+ * Charlotte condo). Every candidate on BOTH rungs is validated against
+ * the query (case + abbreviation normalization, then whole-token
+ * equality); if none match the tool returns resolved:false rather than
  * leak the wrong URL.
  *
- * Graceful degradation: when no listing matches, the tool returns
+ * Graceful degradation: when neither rung matches, the tool returns
  * `{ resolved: false, error: "no listing matched" }` rather than
  * throwing. The unified `get_property_canonical_links` umbrella tool
  * fans out across multiple per-site MCPs and needs each per-site
  * primitive to degrade quietly when its site has no match.
+ *
+ * URL stability: the `_pid/` URL (from `navigationPageLink`) is
+ * preferred for stable references — sha URLs go stale on relisting
+ * (see issue #27).
  */
 
 export interface ByAddressInput {
@@ -162,12 +176,16 @@ export function addressMatchesQuery(
  */
 export { extractPidFromUrl as extractPidFromNavigationPageLink } from '../url.js';
 
+/** Which rung produced a successful resolution. */
+export type MatchedVia = 'freetext' | 'search_fallback';
+
 interface ByAddressResolved {
   resolved: true;
   url: string;
   listing_id_sha?: string;
   pid?: string;
   address: string;
+  matched_via: MatchedVia;
 }
 
 interface ByAddressUnresolved {
@@ -178,6 +196,147 @@ interface ByAddressUnresolved {
 
 type ByAddressResult = ByAddressResolved | ByAddressUnresolved;
 
+/**
+ * Bound on slug-rung page-walk per call. Compass returns
+ * COMPASS_PAGE_SIZE listings per SSR page; this cap keeps a worst-case
+ * fallback from fanning out indefinitely on dense markets. Mirrors the
+ * compass_search_properties `MAX_PAGES` cap (#47) at a tighter ceiling
+ * because the by-address path is interactive.
+ */
+export const BY_ADDRESS_FALLBACK_MAX_PAGES = 5;
+
+interface RawListingLike {
+  listingIdSHA?: string;
+  pageLink?: string;
+  navigationPageLink?: string;
+  subtitles?: string[];
+}
+
+/**
+ * Build the slug-rung path from caller-supplied locality. Compass's
+ * `/homes-for-sale/<slug>/` routing accepts city/state, ZIP, or a bare
+ * state segment. Returns null when the caller gave us nothing to anchor
+ * on — in that case we skip the fallback rather than search the whole
+ * country.
+ *
+ * Locality preference:
+ *   1. `city, state` (e.g. "Lake Lure, NC" → "lake-lure-nc")
+ *   2. `zip`         (e.g. "28746"        → "28746")
+ *   3. `city`        (e.g. "Lake Lure"    → "lake-lure")
+ *   4. `state`       (e.g. "NC"           → "nc")
+ *
+ * The slug rung deliberately omits a price band — that's the follow-up
+ * in #70.
+ */
+export function buildFallbackSlugPath(
+  input: ByAddressInput
+): string | null {
+  const { city, state, zip } = input;
+  let locality: string | null = null;
+  if (city && state) locality = `${city}, ${state}`;
+  else if (zip) locality = zip;
+  else if (city) locality = city;
+  else if (state) locality = state;
+  if (!locality) return null;
+  const slug = locationToSlug(locality);
+  if (!slug) return null;
+  return `/homes-for-sale/${slug}/`;
+}
+
+/**
+ * Find the first candidate whose subtitle-encoded address actually
+ * matches the caller's query. Returns null when none match. The
+ * #45/#55 silent-wrong-match guard runs here, so both the freetext rung
+ * AND the slug-fallback rung get the same whole-token equality check.
+ */
+function findMatchingListing(
+  entries: Array<{ listing?: RawListingLike } | undefined>,
+  input: ByAddressInput
+): RawListingLike | null {
+  for (const entry of entries) {
+    const l = entry?.listing;
+    if (!l?.listingIdSHA) continue;
+    const subtitleAddress = (l.subtitles ?? []).join(', ');
+    if (addressMatchesQuery(subtitleAddress, input)) return l;
+  }
+  return null;
+}
+
+async function fetchListings(
+  client: CompassClient,
+  path: string
+): Promise<Array<{ listing?: RawListingLike }>> {
+  const html = await client.fetchHtml(path);
+  const uc = extractUc(html);
+  const lol = uc ? findLolResults(uc) : null;
+  return (lol?.data ?? []) as Array<{ listing?: RawListingLike }>;
+}
+
+/**
+ * Shared rung walker used by both `compass_get_by_address` and
+ * `compass_resolve_addresses`. Pins the parity contract from #68 —
+ * both routes MUST go through this helper so the rung sequence,
+ * match policy, and `matched_via` labeling can't drift.
+ *
+ * Rungs (in order):
+ *   1. freetext — `/homes-for-sale/?q=<query>` with `addressMatchesQuery` verify
+ *   2. search_fallback — `/homes-for-sale/<locality-slug>/` page-walked
+ *      with the same verify (#71)
+ */
+export async function resolveOneAddress(
+  client: CompassClient,
+  input: ByAddressInput
+): Promise<
+  | { resolved: true; listing: RawListingLike; matched_via: MatchedVia }
+  | { resolved: false; error: string }
+> {
+  // Rung 1: free-text ?q= search.
+  const query = buildAddressQuery(input);
+  const freetextPath = `/homes-for-sale/?q=${encodeURIComponent(query)}`;
+  const freetextEntries = await fetchListings(client, freetextPath);
+  const freetextMatch = findMatchingListing(freetextEntries, input);
+  if (freetextMatch) {
+    return { resolved: true, listing: freetextMatch, matched_via: 'freetext' };
+  }
+
+  // Rung 2: slug-based search anchored on locality (#71).
+  const slugBasePath = buildFallbackSlugPath(input);
+  if (slugBasePath) {
+    for (let page = 1; page <= BY_ADDRESS_FALLBACK_MAX_PAGES; page += 1) {
+      // page=1 is canonical at the bare path (Compass redirects /page-1/).
+      const path =
+        page === 1 ? slugBasePath : `${slugBasePath}page-${page}/`;
+      const entries = await fetchListings(client, path);
+      const matched = findMatchingListing(entries, input);
+      if (matched) {
+        return {
+          resolved: true,
+          listing: matched,
+          matched_via: 'search_fallback',
+        };
+      }
+      // Short page → result set exhausted; stop walking.
+      if (entries.length < COMPASS_PAGE_SIZE) break;
+    }
+  }
+
+  return { resolved: false, error: 'no listing matched the address' };
+}
+
+/**
+ * Translate a resolved listing into the canonical URL form. Prefers the
+ * stable `_pid/` URL (issue #27) when present.
+ */
+export function buildListingUrl(listing: RawListingLike): string {
+  if (listing.navigationPageLink) {
+    return `https://www.compass.com${listing.navigationPageLink}`;
+  }
+  if (listing.pageLink) {
+    return `https://www.compass.com${listing.pageLink}`;
+  }
+  return `https://www.compass.com/homedetails/${listing.listingIdSHA}_lid/`;
+}
+
 export function registerByAddressTools(
   server: McpServer,
   client: CompassClient
@@ -187,7 +346,7 @@ export function registerByAddressTools(
     {
       title: 'Resolve a Compass listing by street address',
       description:
-        "Resolve a free-text street address to a Compass listing's canonical URL and identifiers in one call. Fires a single `/homes-for-sale/?q=<address>` site search, takes the top candidate that ACTUALLY MATCHES the query address (case + street-type abbreviation normalization, then substring/token check), and returns `{ url, listing_id_sha, pid, address, resolved }`. When no candidate matches — including the failure mode where Compass returns a far-away top hit for a query its local market doesn't cover — returns `{ resolved: false, error: \"no listing matched\" }` rather than leaking the wrong URL. The `url` is the stable `_pid/` form when Compass provides a `navigationPageLink` (preferred for trackers/bookmarks — sha URLs go stale on relisting), falling back to the `_lid/` form otherwise. Read-only; safe to call repeatedly.",
+        "Resolve a free-text street address to a Compass listing's canonical URL and identifiers in one call. Walks two rungs: first `/homes-for-sale/?q=<address>` (the free-text rung) and — when that returns no verified match — a slug-based search at `/homes-for-sale/<city-state-or-zip>/` (the search-fallback rung, issue #71). Each candidate is verified against the query (case + street-type abbreviation normalization, then whole-token equality, issue #45) before being accepted. Returns `{ url, listing_id_sha, pid, address, resolved, matched_via }` where `matched_via` is `\"freetext\"` or `\"search_fallback\"` so callers can see which rung found the match. When neither rung matches, returns `{ resolved: false, error: \"no listing matched\" }` rather than leaking a wrong URL. The `url` is the stable `_pid/` form when Compass provides a `navigationPageLink` (preferred for trackers/bookmarks — sha URLs go stale on relisting), falling back to the `_lid/` form otherwise. Read-only; safe to call repeatedly.",
       annotations: {
         title: 'Resolve a Compass listing by street address',
         readOnlyHint: true,
@@ -208,54 +367,24 @@ export function registerByAddressTools(
       },
     },
     async (input) => {
-      const query = buildAddressQuery(input);
       const addressLine = formatAddressLine(input);
-      const searchPath = `/homes-for-sale/?q=${encodeURIComponent(query)}`;
-      const html = await client.fetchHtml(searchPath);
-      const uc = extractUc(html);
-      const lol = uc ? findLolResults(uc) : null;
-      const candidates = (lol?.data ?? []).filter(
-        (e) => e?.listing?.listingIdSHA
-      );
-      // Walk candidates in returned order; pick the first whose address
-      // verifies against the query. This is the silent-wrong-match
-      // gate from issue #45.
-      const matched = candidates.find((entry) => {
-        const l = entry.listing!;
-        // Compass cards encode the human-readable address line(s) in
-        // `subtitles`. In practice the first subtitle is always the
-        // street line and the second is the City/State/ZIP line. If a
-        // listing has a `listingIdSHA` but no `subtitles` (off-market,
-        // data-gap edges), we can't verify the match — silently skip
-        // rather than risk a wrong-match leak. The pre-fix behaviour
-        // would have returned such a listing as the top hit; trading a
-        // rare false-negative for the silent wrong-match in issue #45
-        // is the explicit policy.
-        const subtitleAddress = (l.subtitles ?? []).join(', ');
-        return addressMatchesQuery(subtitleAddress, input);
-      });
-      const listing = matched?.listing;
-      if (!listing) {
+      const outcome = await resolveOneAddress(client, input);
+      if (!outcome.resolved) {
         const result: ByAddressUnresolved = {
           resolved: false,
-          error: 'no listing matched the address',
+          error: outcome.error,
           address: addressLine,
         };
         return textResult(result);
       }
-      const pid = extractPidFromUrl(listing.navigationPageLink);
-      // Prefer the stable _pid/ form when available; fall back to _lid/.
-      const url = listing.navigationPageLink
-        ? `https://www.compass.com${listing.navigationPageLink}`
-        : listing.pageLink
-          ? `https://www.compass.com${listing.pageLink}`
-          : `https://www.compass.com/homedetails/${listing.listingIdSHA}_lid/`;
+      const { listing, matched_via } = outcome;
       const result: ByAddressResolved = {
         resolved: true,
-        url,
+        url: buildListingUrl(listing),
         listing_id_sha: listing.listingIdSHA,
-        pid,
+        pid: extractPidFromUrl(listing.navigationPageLink),
         address: addressLine,
+        matched_via,
       };
       return textResult(result);
     }

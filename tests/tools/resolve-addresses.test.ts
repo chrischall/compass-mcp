@@ -288,4 +288,146 @@ describe('compass_resolve_addresses tool', () => {
       }
     });
   });
+
+  // Issue #71: search-fallback rung. Parity contract from #68 means bulk
+  // must walk the same rungs as single — both routes must surface
+  // matched_via and both must fall through to the slug-based search
+  // when ?q= comes up empty.
+  describe('#71 search-fallback rung parity', () => {
+    it('bulk rows surface matched_via from the shared resolver', async () => {
+      // Row 1: matches on ?q= (one fetch).
+      // Row 2: ?q= empty, slug returns a match (two fetches).
+      mockFetchHtml.mockImplementation(async (path: string) => {
+        if (path.startsWith('/homes-for-sale/?q=')) {
+          const m = /q=([^&]+)/.exec(path);
+          const q = m ? decodeURIComponent(m[1]) : '';
+          if (q.includes('500 Main')) {
+            return searchHtml([
+              {
+                listing: {
+                  listingIdSHA: 'sha-ft',
+                  pageLink: '/homedetails/500-main-st/sha-ft_lid/',
+                  subtitles: ['500 Main St', 'Asheville, NC'],
+                },
+              },
+            ]);
+          }
+          return searchHtml([]); // 126 Sleeping Bear Ln ?q= → empty.
+        }
+        // Slug rung for the Lake Lure address.
+        if (path.includes('lake-lure-nc')) {
+          return searchHtml([
+            {
+              listing: {
+                listingIdSHA: 'sha-fb',
+                pageLink: '/homedetails/126-sleeping-bear-ln/sha-fb_lid/',
+                subtitles: ['126 Sleeping Bear Ln', 'Lake Lure, NC 28746'],
+              },
+            },
+          ]);
+        }
+        return searchHtml([]);
+      });
+
+      const r = await harness.callTool('compass_resolve_addresses', {
+        addresses: [
+          { address: '500 Main St', city: 'Asheville', state: 'NC' },
+          { address: '126 Sleeping Bear Ln', city: 'Lake Lure', state: 'NC' },
+        ],
+      });
+      const parsed = parseToolResult<{
+        rows: Array<{ resolved: boolean; matched_via?: string }>;
+      }>(r);
+      expect(parsed.rows[0].resolved).toBe(true);
+      expect(parsed.rows[0].matched_via).toBe('freetext');
+      expect(parsed.rows[1].resolved).toBe(true);
+      expect(parsed.rows[1].matched_via).toBe('search_fallback');
+    });
+
+    it('CRITICAL parity: bulk partitions identically to single when fallback is load-bearing', async () => {
+      // Three rows with varying rung behavior. The bulk + single
+      // resolvers MUST partition resolved/unresolved AND matched_via
+      // identically — this pins the #68 parity contract to the new rung.
+      const impl = async (path: string) => {
+        if (path.startsWith('/homes-for-sale/?q=')) {
+          const m = /q=([^&]+)/.exec(path);
+          const q = m ? decodeURIComponent(m[1]) : '';
+          // Row A: clean ?q= hit.
+          if (q.includes('500 Main')) {
+            return searchHtml([
+              {
+                listing: {
+                  listingIdSHA: 'sha-A',
+                  pageLink: '/homedetails/500-main-st/sha-A_lid/',
+                  subtitles: ['500 Main St', 'Asheville, NC'],
+                },
+              },
+            ]);
+          }
+          // Row B + C: ?q= empty → fallback.
+          return searchHtml([]);
+        }
+        // Slug rung. Row B's locality (lake-lure-nc) has a matching
+        // listing; Row C's slug returns nothing (unresolved).
+        if (path.includes('lake-lure-nc')) {
+          return searchHtml([
+            {
+              listing: {
+                listingIdSHA: 'sha-B',
+                pageLink: '/homedetails/126-sleeping-bear-ln/sha-B_lid/',
+                subtitles: ['126 Sleeping Bear Ln', 'Lake Lure, NC 28746'],
+              },
+            },
+          ]);
+        }
+        return searchHtml([]);
+      };
+
+      const inputs = [
+        { address: '500 Main St', city: 'Asheville', state: 'NC' },
+        { address: '126 Sleeping Bear Ln', city: 'Lake Lure', state: 'NC' },
+        { address: '999 Nowhere Rd', city: 'Atlantis', state: 'XX' },
+      ];
+
+      const singleHarness = await createTestHarness((server) =>
+        registerByAddressTools(server, mockClient)
+      );
+      try {
+        mockFetchHtml.mockImplementation(impl);
+        const singleResults = await Promise.all(
+          inputs.map((i) =>
+            singleHarness.callTool('compass_get_by_address', i)
+          )
+        );
+        const singleShape = singleResults.map((r) => {
+          const p = parseToolResult<{
+            resolved: boolean;
+            matched_via?: string;
+          }>(r);
+          return { resolved: p.resolved, matched_via: p.matched_via };
+        });
+
+        mockFetchHtml.mockImplementation(impl);
+        const bulkResult = await harness.callTool('compass_resolve_addresses', {
+          addresses: inputs,
+        });
+        const bulkRows = parseToolResult<{
+          rows: Array<{ resolved: boolean; matched_via?: string }>;
+        }>(bulkResult).rows;
+        const bulkShape = bulkRows.map((r) => ({
+          resolved: r.resolved,
+          matched_via: r.matched_via,
+        }));
+
+        expect(bulkShape).toEqual(singleShape);
+        expect(bulkShape).toEqual([
+          { resolved: true, matched_via: 'freetext' },
+          { resolved: true, matched_via: 'search_fallback' },
+          { resolved: false, matched_via: undefined },
+        ]);
+      } finally {
+        await singleHarness.close();
+      }
+    });
+  });
 });
