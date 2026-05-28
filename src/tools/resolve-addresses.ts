@@ -2,14 +2,14 @@ import { z } from 'zod';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import type { CompassClient } from '../client.js';
 import { textResult } from '../mcp.js';
-import { extractUc } from '../page-state.js';
 import { extractPidFromUrl } from '../url.js';
 import {
-  addressMatchesQuery,
   buildAddressQuery,
+  buildListingUrl,
+  resolveOneAddress,
   type ByAddressInput,
+  type MatchedVia,
 } from './by-address.js';
-import { findLolResults, formatHome, type FormattedHome } from './search.js';
 
 /**
  * `compass_resolve_addresses` — bulk address-to-URL resolver.
@@ -25,13 +25,13 @@ import { findLolResults, formatHome, type FormattedHome } from './search.js';
  * (HTTP / parse failures) are captured separately so one bad input
  * doesn't fail the whole call.
  *
- * Bulk/single parity (issue #67). The address-match rung is delegated
- * to `addressMatchesQuery` from `./by-address.js` — the SAME helper the
- * single `compass_get_by_address` tool uses — so the two paths can't
- * drift on subtleties like substring vs. whole-token comparison. The
- * bulk path historically carried a local copy that used `cand.includes`
- * substring containment and silently leaked prefix-collision wrong
- * matches (e.g. "12 Oak St" resolving to "1234 Oak St").
+ * Bulk/single parity (issue #67 + #71). The whole rung walker is
+ * delegated to `resolveOneAddress` from `./by-address.js` — the SAME
+ * helper the single `compass_get_by_address` tool uses — so the two
+ * paths can't drift on rung sequence, match policy (`addressMatchesQuery`
+ * whole-token equality, #45), or `matched_via` labeling (#71). The
+ * bulk path historically carried a local copy that used substring
+ * containment and silently leaked prefix-collision wrong matches.
  */
 
 export const RESOLVE_ADDRESSES_MAX = 100;
@@ -43,6 +43,7 @@ interface ResolvedRow {
   listing_id_sha: string;
   pid?: string;
   address: string;
+  matched_via: MatchedVia;
 }
 
 interface UnresolvedRow {
@@ -59,43 +60,23 @@ async function resolveOne(
 ): Promise<RowResult> {
   const query = buildAddressQuery(input);
   try {
-    const path = `/homes-for-sale/?q=${encodeURIComponent(query)}`;
-    const html = await client.fetchHtml(path);
-    const uc = extractUc(html);
-    const lol = uc ? findLolResults(uc) : null;
-    const candidates = (lol?.data ?? [])
-      .map(formatHome)
-      .filter((h): h is FormattedHome => h !== null);
-    const matched = candidates.find((h) => {
-      // Use both subtitle parts as the candidate string (street + locality).
-      // Single uses `(l.subtitles ?? []).join(', ')` — formatHome stashes
-      // subtitle[0] in address and subtitle[1] in neighborhood, so this
-      // recovers the same string.
-      const candAddr = [h.address, h.neighborhood].filter(Boolean).join(', ');
-      return addressMatchesQuery(candAddr, input);
-    });
-    if (!matched) {
-      return {
-        resolved: false,
-        error: 'no listing matched the address',
-        query,
-      };
+    const outcome = await resolveOneAddress(client, input);
+    if (!outcome.resolved) {
+      return { resolved: false, error: outcome.error, query };
     }
-    // formatHome stashes the pid-form URL in property_url; strip origin
-    // to recover the path. Reverse out the path to extract the pid,
-    // when present.
-    const pid = extractPidFromUrl(
-      matched.property_url?.replace('https://www.compass.com', '')
-    );
+    const { listing, matched_via } = outcome;
+    const subtitleAddress = (listing.subtitles ?? []).join(', ');
+    const propertyUrl = listing.navigationPageLink
+      ? `https://www.compass.com${listing.navigationPageLink}`
+      : undefined;
     return {
       resolved: true,
-      url: matched.url,
-      property_url: matched.property_url,
-      listing_id_sha: matched.listing_id_sha,
-      pid,
-      address: [matched.address, matched.neighborhood]
-        .filter(Boolean)
-        .join(', ') || query,
+      url: buildListingUrl(listing),
+      property_url: propertyUrl,
+      listing_id_sha: listing.listingIdSHA!,
+      pid: extractPidFromUrl(listing.navigationPageLink),
+      address: subtitleAddress || query,
+      matched_via,
     };
   } catch (e) {
     return {
@@ -116,9 +97,9 @@ export function registerResolveAddressesTools(
       title: 'Bulk-resolve Compass listings by street address',
       description:
         `Resolve up to ${RESOLVE_ADDRESSES_MAX} street addresses to Compass listing URLs in a single call. Returns one row per input, ` +
-        'either `{ resolved: true, url, listing_id_sha, pid, address }` or `{ resolved: false, error, query }`. ' +
-        "Each row is verified independently against the same address-match policy as `compass_get_by_address` — Compass's " +
-        'search degrades into far-away top hits when the local market has no match, and bulk amplifies the corruption ' +
+        'either `{ resolved: true, url, listing_id_sha, pid, address, matched_via }` or `{ resolved: false, error, query }`. ' +
+        "Each row walks the same two rungs as `compass_get_by_address` — first `/homes-for-sale/?q=<address>` (freetext), then `/homes-for-sale/<locality-slug>/` (search_fallback, issue #71) — and verifies candidates against the same whole-token address-match policy (#45). " +
+        'The `matched_via` field on each resolved row indicates which rung found it. Compass\'s search degrades into far-away top hits when the local market has no match, and bulk amplifies the corruption ' +
         'surface, so a miss returns `resolved: false` with no URL rather than leaking the wrong property. Calls fan out ' +
         'concurrently server-side. Read-only; safe to call repeatedly.',
       annotations: {
