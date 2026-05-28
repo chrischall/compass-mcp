@@ -36,6 +36,36 @@ describe('buildSummary', () => {
     const beds = summary.find((r) => r.field === 'beds')!;
     expect(beds.values).toEqual([2, null, 4]);
   });
+
+  it('includes lot_size_acres in the summary, null-safe (#82)', () => {
+    const rows = [
+      {
+        listing_id_sha: 'a',
+        property: {
+          url: 'u',
+          lot_size_sqft: 45_738,
+          lot_size_acres: 1.05,
+        } as never,
+      },
+      {
+        listing_id_sha: 'b',
+        property: {
+          url: 'v',
+          // condo: no lot
+          lot_size_acres: null,
+        } as never,
+      },
+    ];
+    const summary = buildSummary(rows);
+    expect(summary.find((r) => r.field === 'lot_size_sqft')?.values).toEqual([
+      45_738,
+      null,
+    ]);
+    expect(summary.find((r) => r.field === 'lot_size_acres')?.values).toEqual([
+      1.05,
+      null,
+    ]);
+  });
 });
 
 describe('compass_compare_properties tool', () => {

@@ -264,6 +264,12 @@ export interface FormattedProperty {
   half_baths?: number;
   sqft?: number;
   lot_size_sqft?: number;
+  /**
+   * `round(lot_size_sqft / 43560, 2)` — lot size in acres, the unit that
+   * matters for rural/mountain/land listings. `null` (never `0`) when the
+   * lot size is absent or `0` (condos / missing data). (Issue #82.)
+   */
+  lot_size_acres?: number | null;
   lot_size_formatted?: string;
   rooms?: number;
   /**
@@ -491,6 +497,28 @@ export function hoaToMonthlyUsd(
   return Math.round(monthly);
 }
 
+/** Square feet in one acre. */
+const SQFT_PER_ACRE = 43_560;
+
+/**
+ * Derive lot size in acres from a square-foot lot size, rounded to 2 dp
+ * (#82). Pairs with the raw `lot_size_sqft` — acreage is the unit that
+ * matters for rural/mountain/land listings (Compass surfaces both as e.g.
+ * "1.05 AC / 45,738 SF" upstream).
+ *
+ * Null-safe: returns `null` (never `0`) when the input is missing,
+ * non-finite, or `<= 0` — a `0`/absent lot is treated as missing (condos /
+ * missing public records), not a real "0 acre" lot.
+ */
+export function lotSizeAcres(
+  lotSqFt: number | undefined | null
+): number | null {
+  if (typeof lotSqFt !== 'number' || !Number.isFinite(lotSqFt) || lotSqFt <= 0) {
+    return null;
+  }
+  return Math.round((lotSqFt / SQFT_PER_ACRE) * 100) / 100;
+}
+
 /**
  * Null out the 0/1 not-yet-assessed sentinel that Compass surfaces on
  * some new-construction listings. (Issue #38.)
@@ -679,6 +707,9 @@ export function format(
     half_baths: size.halfBathrooms,
     sqft: size.squareFeet,
     lot_size_sqft: size.lotSizeInSquareFeet,
+    // #82 derived lot_size_acres. Null-safe: an absent or 0 lot
+    // (condos / missing data) yields null, never 0.
+    lot_size_acres: lotSizeAcres(size.lotSizeInSquareFeet),
     lot_size_formatted: size.formattedLotSize,
     rooms: size.totalRooms,
     // description is opt-in via FormatOptions; extracted_features is
@@ -714,7 +745,7 @@ export function registerPropertyTools(
     {
       title: 'Get Compass property details',
       description:
-        "Fetch a property's full Compass record. Pass either `url` (a full Compass homedetails URL or path from a compass_search_properties result) or `listing_id_sha` alone — when only the sha is supplied, the tool resolves the canonical /homedetails/<slug>/<sha>_lid/ path internally via Compass site search. Returns address, neighborhood, beds/baths, sqft, price + price-per-sqft, monthly charges, MLS status, amenities, schools, parcel number, and the canonical Compass URL. Also returns `extracted_features` (lake_front, hot_tub, basement, furnished, dock, community) keyword-parsed from the description.\n\n" +
+        "Fetch a property's full Compass record. Pass either `url` (a full Compass homedetails URL or path from a compass_search_properties result) or `listing_id_sha` alone — when only the sha is supplied, the tool resolves the canonical /homedetails/<slug>/<sha>_lid/ path internally via Compass site search. Returns address, neighborhood, beds/baths, sqft, lot size (`lot_size_sqft` plus the derived `lot_size_acres` = round(sqft / 43560, 2), null — never 0 — for condos / missing lots), price + price-per-sqft, monthly charges, MLS status, amenities, schools, parcel number, and the canonical Compass URL. Also returns `extracted_features` (lake_front, hot_tub, basement, furnished, dock, community) keyword-parsed from the description.\n\n" +
         "DESCRIPTION HANDLING: The raw `description` (Compass marketing copy) is omitted by default — pass `include_description: true` to keep it. `extracted_features` is always populated and usually sufficient.\n\n" +
         "URL FORMS: Compass exposes two URL shapes for a listing. `_lid/` (content-addressed by `listing_id_sha`) — what this tool fetches and what `url` returns — is the form to use for reading the current listing record. `_pid/` (opaque short ID, in `property_url` and the surfaced `pid` field) is **stable across re-listings** and is the right choice for any long-lived reference (trackers, sheets, bookmarks); sha-based URLs go stale when a property is delisted and relisted. Read-only; safe to call repeatedly.",
       annotations: {

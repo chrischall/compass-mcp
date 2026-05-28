@@ -50,6 +50,7 @@ const SUMMARY_FIELDS: Array<keyof FormattedProperty> = [
   'baths',
   'sqft',
   'lot_size_sqft',
+  'lot_size_acres',
   'localized_status',
 ];
 
