@@ -16,7 +16,6 @@
 // here so tool authors never have to think about it.
 import type {
   BridgeStatus,
-  FetchInit,
   FetchResult,
   CompassTransport,
 } from './transport.js';
@@ -155,6 +154,16 @@ export class CompassClient {
    * non-2xx, invalid JSON, or sign-in page. Currently unused — kept for
    * forward compatibility if Compass exposes a usable JSON API for
    * saved-listings or similar.
+   *
+   * The serialization / header-defaults / 204-handling / JSON.parse all
+   * live in `transport.requestJson()` (fetchproxy 0.10.0's `requestJson`
+   * envelope, which several MCPs hand-rolled char-for-char). It returns
+   * BOTH the parsed `data` and the raw `result`; we keep compass's own
+   * `throwIfNotOk` / `throwIfSignInPage` guards over `result` since the
+   * sign-in interstitial (AWS WAF challenge) is compass-specific. The
+   * one extra wrinkle: `requestJson` succeeds (returns) on any HTTP
+   * status, so we run `throwIfNotOk` BEFORE trusting `data` — a parsed
+   * body from a 500 must not slip through.
    */
   async fetchJson<T>(
     path: string,
@@ -165,36 +174,14 @@ export class CompassClient {
     } = {}
   ): Promise<T> {
     const method = init.method ?? 'POST';
-    const serialised: FetchInit = {
-      path,
+    const { data, result } = await this.transport.requestJson<T>(path, {
       method,
-      headers: {
-        Accept: 'application/json',
-        ...(method !== 'GET' && init.body !== undefined
-          ? { 'Content-Type': 'application/json' }
-          : {}),
-        ...(init.headers ?? {}),
-      },
-      body:
-        method === 'GET' || init.body === undefined
-          ? undefined
-          : JSON.stringify(init.body),
-    };
-    const result = await this.transport.fetch(serialised);
+      headers: init.headers,
+      body: init.body,
+    });
     this.throwIfNotOk(result, method, path);
     this.throwIfSignInPage(result);
-    if (result.status === 204 || result.body === '') {
-      return null as T;
-    }
-    try {
-      return JSON.parse(result.body) as T;
-    } catch (e) {
-      throw new Error(
-        `Compass ${method} ${path} — response was not JSON: ${String(
-          (e as Error).message
-        )}`
-      );
-    }
+    return data as T;
   }
 
   private throwIfNotOk(result: FetchResult, method: string, path: string): void {
