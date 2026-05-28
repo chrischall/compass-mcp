@@ -4,6 +4,7 @@ import {
   buildPath,
   findListing,
   format,
+  lotSizeAcres,
   registerPropertyTools,
   resolvePathFromSha,
 } from '../../src/tools/properties.js';
@@ -112,6 +113,39 @@ describe('findListing', () => {
   });
 });
 
+describe('lotSizeAcres (#82)', () => {
+  it('45,738 sq ft → 1.05 acres', () => {
+    // 45738 / 43560 = 1.0499… → rounds to 1.05
+    expect(lotSizeAcres(45_738)).toBe(1.05);
+  });
+  it('13,503 sq ft → 0.31 acres', () => {
+    expect(lotSizeAcres(13_503)).toBe(0.31);
+  });
+  it('94,089 sq ft → 2.16 acres', () => {
+    expect(lotSizeAcres(94_089)).toBe(2.16);
+  });
+  it('rounds to 2 decimal places', () => {
+    expect(lotSizeAcres(43_560)).toBe(1.0); // exactly one acre
+    expect(lotSizeAcres(21_780)).toBe(0.5); // exactly half an acre
+  });
+  it('null / undefined lot size → null (not 0)', () => {
+    expect(lotSizeAcres(null)).toBeNull();
+    expect(lotSizeAcres(undefined)).toBeNull();
+  });
+  it('zero lot size → null (treated as missing, never 0 acres)', () => {
+    expect(lotSizeAcres(0)).toBeNull();
+  });
+  it('tiny positive lot that rounds to 0.00 → null (never 0)', () => {
+    // 200 / 43560 = 0.0046… → rounds to 0.00, which must null out so the
+    // field stays consistent with the canonical cohort semantic.
+    expect(lotSizeAcres(200)).toBeNull();
+    expect(lotSizeAcres(200)).not.toBe(0);
+  });
+  it('non-finite input → null', () => {
+    expect(lotSizeAcres(NaN)).toBeNull();
+  });
+});
+
 describe('format', () => {
   it('flattens a typical homedetails listing record', () => {
     const out = format({
@@ -186,6 +220,9 @@ describe('format', () => {
     expect(out.full_baths).toBe(3);
     expect(out.half_baths).toBe(1);
     expect(out.sqft).toBe(3400);
+    expect(out.lot_size_sqft).toBe(4500);
+    // 4500 / 43560 = 0.1033… → 0.10
+    expect(out.lot_size_acres).toBe(0.1);
     expect(out.price_per_sqft).toBeCloseTo(734.71);
     expect(out.monthly_charges).toBeCloseTo(929.23);
     expect(out.amenities).toEqual(['Patio', 'Fireplace']);
@@ -198,6 +235,53 @@ describe('format', () => {
         types: ['Public'],
       },
     ]);
+  });
+
+  it('derives lot_size_acres from lotSizeInSquareFeet for a SFH (#82)', () => {
+    // Compass surfaces "1.05 AC / 45,738 SF" upstream — the sq-ft side is
+    // lotSizeInSquareFeet, and lot_size_acres mirrors the AC side.
+    const out = format({
+      listingIdSHA: 'sfh',
+      location: { prettyAddress: '158 Raven Blvd' },
+      size: {
+        squareFeet: 2400,
+        lotSizeInSquareFeet: 45_738,
+        formattedLotSize: '1.05 AC / 45,738 SF',
+      },
+    });
+    expect(out.lot_size_sqft).toBe(45_738);
+    expect(out.lot_size_acres).toBe(1.05);
+  });
+
+  it('lot_size_acres is null (not 0) for a condo with no lot (#82)', () => {
+    const out = format({
+      listingIdSHA: 'condo',
+      location: { prettyAddress: '155 Quail Cove Blvd, Unit 4' },
+      size: {
+        squareFeet: 1100,
+        // condo: no lotSizeInSquareFeet at all
+      },
+    });
+    expect(out.lot_size_sqft).toBeUndefined();
+    expect(out.lot_size_acres).toBeNull();
+    // Must be null, never the 0 placeholder.
+    expect(out.lot_size_acres).not.toBe(0);
+  });
+
+  it('lot_size_acres is null for a tiny lot that rounds to 0, but lot_size_sqft stays set', () => {
+    // 200 sqft → 0.0046… acres → rounds to 0.00, which must null out even
+    // though the raw sqft is a real, present value.
+    const out = format({
+      listingIdSHA: 'tiny',
+      location: { prettyAddress: '1 Sliver Ln' },
+      size: {
+        squareFeet: 900,
+        lotSizeInSquareFeet: 200,
+      },
+    });
+    expect(out.lot_size_sqft).toBe(200);
+    expect(out.lot_size_acres).toBeNull();
+    expect(out.lot_size_acres).not.toBe(0);
   });
 
   it('synthesizes a URL when pageLink is missing', () => {
@@ -265,6 +349,53 @@ describe('compass_get_property tool', () => {
     expect(parsed.address).toBe('1 Main');
     expect(parsed.price).toBe(1000000);
     expect(parsed.localized_status).toBe('Coming Soon');
+  });
+
+  it('surfaces lot_size_sqft + lot_size_acres for a SFH (#82)', async () => {
+    mockFetchHtml.mockResolvedValueOnce(
+      htmlWith({
+        listingIdSHA: 'sfh',
+        pageLink: '/homedetails/foo/sfh_lid/',
+        location: { prettyAddress: '158 Raven Blvd' },
+        size: {
+          squareFeet: 2400,
+          lotSizeInSquareFeet: 45_738,
+          formattedLotSize: '1.05 AC / 45,738 SF',
+        },
+        price: { lastKnown: 500_000 },
+      })
+    );
+    const r = await harness.callTool('compass_get_property', {
+      url: '/homedetails/foo/sfh_lid/',
+    });
+    const parsed = parseToolResult<{
+      lot_size_sqft: number | undefined;
+      lot_size_acres: number | null;
+    }>(r);
+    expect(parsed.lot_size_sqft).toBe(45_738);
+    expect(parsed.lot_size_acres).toBe(1.05);
+  });
+
+  it('nulls lot_size_acres for a condo with no lot — never 0 (#82)', async () => {
+    mockFetchHtml.mockResolvedValueOnce(
+      htmlWith({
+        listingIdSHA: 'condo',
+        pageLink: '/homedetails/foo/condo_lid/',
+        location: { prettyAddress: '155 Quail Cove Blvd, Unit 4' },
+        // condo: size carries no lotSizeInSquareFeet
+        size: { bedrooms: 2, totalBathrooms: 2, squareFeet: 1100 },
+        price: { lastKnown: 300_000 },
+      })
+    );
+    const r = await harness.callTool('compass_get_property', {
+      url: '/homedetails/foo/condo_lid/',
+    });
+    const parsed = parseToolResult<{
+      lot_size_sqft: number | undefined;
+      lot_size_acres: number | null;
+    }>(r);
+    expect(parsed.lot_size_acres).toBeNull();
+    expect(parsed.lot_size_acres).not.toBe(0);
   });
 
   it('resolves a sha-only call by searching for the slug, then fetches the listing', async () => {
