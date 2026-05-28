@@ -28,6 +28,9 @@ function stubInner(role: 'host' | 'peer' | null = 'host'): Inner {
     bridgeHealth: vi.fn().mockReturnValue({
       role,
       port: 37149,
+      serverVersion: '0.0.0',
+      fetchTimeoutMs: 30_000,
+      bridgeReviveDelayMs: 2_000,
       lastSuccessAt: null,
       lastFailureAt: null,
       lastFailureReason: null,
@@ -163,6 +166,9 @@ describe('FetchproxyTransport', () => {
     inner.bridgeHealth.mockReturnValue({
       role: 'host',
       port: 37200,
+      serverVersion: '1.2.3',
+      fetchTimeoutMs: 5000,
+      bridgeReviveDelayMs: 2_000,
       lastSuccessAt: 111,
       lastFailureAt: 222,
       lastFailureReason: 'boom',
@@ -184,12 +190,43 @@ describe('FetchproxyTransport', () => {
     });
   });
 
+  it('status().fetchTimeoutMs is sourced from bridgeHealth() — not the constructor option (fetchproxy#82)', () => {
+    // Regression guard: the adapter used to mirror opts.fetchTimeoutMs
+    // into a private field and surface that through status(). That
+    // drifted from the server's actual resolved value any time the
+    // server changed its default or applied caller-side validation.
+    // Now status().fetchTimeoutMs comes straight off bridgeHealth().
+    const t = new FetchproxyTransport({
+      version: '1.0.0',
+      fetchTimeoutMs: 5000, // constructor option — ignored by status()
+    });
+    const inner = stubInner('host');
+    inner.bridgeHealth.mockReturnValue({
+      role: 'host',
+      port: 37149,
+      serverVersion: '1.0.0',
+      fetchTimeoutMs: 12_345, // server-resolved value — wins
+      bridgeReviveDelayMs: 2_000,
+      lastSuccessAt: null,
+      lastFailureAt: null,
+      lastFailureReason: null,
+      consecutiveFailures: 0,
+      lastExtensionMessageAt: null,
+    });
+    installInner(t, inner);
+
+    expect(t.status().fetchTimeoutMs).toBe(12_345);
+  });
+
   it('status().role tracks whatever role the inner reports (null pre-listen)', () => {
     const t = new FetchproxyTransport({ version: '1.0.0' });
     const inner = stubInner(null);
     inner.bridgeHealth.mockReturnValue({
       role: null,
       port: 37149,
+      serverVersion: '1.0.0',
+      fetchTimeoutMs: 30_000,
+      bridgeReviveDelayMs: 2_000,
       lastSuccessAt: null,
       lastFailureAt: null,
       lastFailureReason: null,
