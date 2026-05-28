@@ -8,6 +8,9 @@
 // `FetchproxyBridgeDownError` / `FetchproxyTimeoutError` on failure
 // (both subclasses of `FetchproxyProtocolError`). Freshness counters
 // previously hand-rolled here now come from `inner.bridgeHealth()`.
+//
+// 0.9.0: `fetchTimeoutMs` (30_000) and `bridgeReviveDelayMs` (2_000)
+// are server defaults — we only forward them when the caller overrides.
 
 import {
   FetchproxyServer,
@@ -64,9 +67,15 @@ export class FetchproxyTransport implements CompassTransport {
       version: opts.version,
       // Subdomains of compass.com (www, photos, etc.) match automatically.
       domains: ['compass.com'],
-      fetchTimeoutMs: this.fetchTimeoutMs,
-      // fetchproxy#71 — keep SW resident across human-paced session gaps
+      // fetchproxy#71 — keep SW resident across human-paced session gaps.
+      // 0.9.0 still defaults this off; promoted to default in 0.10.0.
       keepAliveIntervalMs: 25_000,
+      // fetchTimeoutMs / bridgeReviveDelayMs default to 30_000 / 2_000 in
+      // 0.9.0, matching what we'd otherwise hardcode — only forward when
+      // the caller overrides.
+      ...(opts.fetchTimeoutMs !== undefined
+        ? { fetchTimeoutMs: opts.fetchTimeoutMs }
+        : {}),
       ...(opts.bridgeReviveDelayMs !== undefined
         ? { bridgeReviveDelayMs: opts.bridgeReviveDelayMs }
         : {}),
