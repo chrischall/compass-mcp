@@ -1,5 +1,25 @@
 # Changelog
 
+## [0.8.0](https://github.com/chrischall/compass-mcp/compare/v0.7.0...v0.8.0) (2026-05-27)
+
+
+### Features
+
+* **batching:** compass_bulk_get + compass_resolve_addresses ([#59](https://github.com/chrischall/compass-mcp/issues/59)) ([ec9d13e](https://github.com/chrischall/compass-mcp/commit/ec9d13efdd53ebe1b13ee93eb5c746ef69df371c))
+* comparable rentals tool + surface listing_agent on every property ([#62](https://github.com/chrischall/compass-mcp/issues/62)) ([83054b9](https://github.com/chrischall/compass-mcp/commit/83054b9f99187221c11a07ade6c1aced024e1ecb))
+* **history:** events_normalized + document search MAX_PAGES cap ([#61](https://github.com/chrischall/compass-mcp/issues/61)) ([ee90f66](https://github.com/chrischall/compass-mcp/commit/ee90f6642bc727cd3c466135077a481d1ee477d3))
+* lazy-revive bridge + raise compare cap 8-&gt;25 ([#63](https://github.com/chrischall/compass-mcp/issues/63)) ([465608e](https://github.com/chrischall/compass-mcp/commit/465608e501e6e86df4ac159a7f8cf07cfc77414f))
+* **p0:** default include_description=false + server-side extracted_features ([#56](https://github.com/chrischall/compass-mcp/issues/56)) ([d2e066f](https://github.com/chrischall/compass-mcp/commit/d2e066f00fd98e89f28ed59e4ba03190f10ffc5f))
+* **p1:** derived schema fields + tax cleanup + compare summary opt-in ([#58](https://github.com/chrischall/compass-mcp/issues/58)) ([be75674](https://github.com/chrischall/compass-mcp/commit/be75674a5c16ad15c6efd5d995f87d69ca38a383))
+* **session:** multi-session scaffolding + compass_get_session_context ([#60](https://github.com/chrischall/compass-mcp/issues/60)) ([05da709](https://github.com/chrischall/compass-mcp/commit/05da70930b9040163a48bd895b1fcdfe77872cc7))
+* **transport-fetchproxy,healthcheck:** adopt @fetchproxy/server 0.8.0 + surface bridge hints ([#66](https://github.com/chrischall/compass-mcp/issues/66)) ([d3c271d](https://github.com/chrischall/compass-mcp/commit/d3c271dfbdfee9e7d88bf3e9e7d59e395039e14a))
+
+
+### Bug Fixes
+
+* **by-address:** verify candidate address matches query before resolving ([#55](https://github.com/chrischall/compass-mcp/issues/55)) ([a253389](https://github.com/chrischall/compass-mcp/commit/a253389ca98f86c918c88023a0c1bab1f32366a6))
+* **p0:** drop bare "with exceptions" from FURNISHED_PARTIAL_RE ([#64](https://github.com/chrischall/compass-mcp/issues/64)) ([1d7e606](https://github.com/chrischall/compass-mcp/commit/1d7e606d825af131c718c71ef7bb65e2e3a05fb0))
+
 ## [0.7.0](https://github.com/chrischall/compass-mcp/compare/v0.6.2...v0.7.0) (2026-05-26)
 
 
