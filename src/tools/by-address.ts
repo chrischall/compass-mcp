@@ -1,5 +1,9 @@
 import { z } from 'zod';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
+import {
+  FetchproxyBridgeDownError,
+  FetchproxyTimeoutError,
+} from '@fetchproxy/server';
 import type { CompassClient } from '../client.js';
 import { textResult } from '../mcp.js';
 import { extractUc } from '../page-state.js';
@@ -304,8 +308,18 @@ async function fetchListings(
  * carries no `_pid/`, so we leave `navigationPageLink`/`pageLink` unset
  * and `buildListingUrl` falls back to the `_lid/` form.
  *
- * Returns null on any failure (WAF 403, transport fault, empty) so the
- * caller falls through to the SSR rungs rather than erroring out.
+ * Returns null on a *content* failure (WAF 403, HTTP error, empty,
+ * parse fault) so the caller falls through to the SSR rungs.
+ *
+ * Transport faults are different (issue #85). A `FetchproxyTimeoutError`
+ * / `FetchproxyBridgeDownError` means we never got an answer from
+ * Compass — collapsing that to "typeahead had nothing" (null → fall
+ * through → SSR rungs that are WAF-walled → false "no listing matched")
+ * is exactly the misclassification that produced the false "covers only
+ * 4/60" conclusion. We re-throw those so `retryOnceOnTimeout` gets a
+ * chance and, failing that, the per-row classifier surfaces a distinct
+ * retryable `status: "timeout"` / `"bridge_down"` instead of a bare
+ * `resolved: false`.
  */
 async function fetchTypeaheadCandidates(
   client: CompassClient,
@@ -328,7 +342,15 @@ async function fetchTypeaheadCandidates(
         ),
       } satisfies RawListingLike,
     }));
-  } catch {
+  } catch (e) {
+    // Transport faults must NOT be swallowed (#85) — a timeout/bridge-
+    // down is "we never asked", not "Compass has nothing".
+    if (
+      e instanceof FetchproxyTimeoutError ||
+      e instanceof FetchproxyBridgeDownError
+    ) {
+      throw e;
+    }
     return null;
   }
 }
