@@ -4,6 +4,10 @@ import {
   FetchproxyBridgeDownError,
   FetchproxyTimeoutError,
 } from '@fetchproxy/server';
+import {
+  normalizeAddressForCompare,
+  SUFFIX_PAIRS,
+} from '@chrischall/realty-core';
 import type { CompassClient } from '../client.js';
 import { textResult } from '../mcp.js';
 import { extractUc } from '../page-state.js';
@@ -106,41 +110,38 @@ function formatAddressLine(input: ByAddressInput): string {
 }
 
 /**
- * Common US street-type abbreviations, longest-form first so a "Lane"
- * rule doesn't trip on a shorter regex.
+ * Per-token street-suffix fold, derived from realty-core's canonical
+ * `SUFFIX_PAIRS` (the source of `expandSuffix`). Maps every recognised
+ * full-form suffix to its abbreviation so "Lane"/"Ln", "Street"/"St"
+ * etc. canonicalize to a single token. Both directions are keyed under
+ * their lowercase form so a token already in either form resolves.
+ *
+ * We can't use `expandSuffix` directly here: it only swaps the TRAILING
+ * suffix of a street line, but the verifier compares whole tokens of a
+ * candidate address whose suffix sits MID-string (before the city), so
+ * the fold has to apply per-token regardless of position.
  */
-const STREET_TYPE_CANON: Array<[RegExp, string]> = [
-  [/\bboulevard\b/g, 'blvd'],
-  [/\bstreet\b/g, 'st'],
-  [/\bavenue\b/g, 'ave'],
-  [/\bdrive\b/g, 'dr'],
-  [/\broad\b/g, 'rd'],
-  [/\bcourt\b/g, 'ct'],
-  [/\bplace\b/g, 'pl'],
-  [/\blane\b/g, 'ln'],
-  [/\bcircle\b/g, 'cir'],
-  [/\bterrace\b/g, 'ter'],
-  [/\bhighway\b/g, 'hwy'],
-  [/\bparkway\b/g, 'pkwy'],
-  [/\bsuite\b/g, 'ste'],
-];
+const SUFFIX_FOLD: ReadonlyMap<string, string> = new Map(
+  SUFFIX_PAIRS.flatMap(([abbr, full]) => [
+    [abbr.toLowerCase(), abbr.toLowerCase()] as [string, string],
+    [full.toLowerCase(), abbr.toLowerCase()] as [string, string],
+  ])
+);
 
 /**
- * Normalize an address for substring comparison: lowercase, strip
- * punctuation, collapse whitespace, fold common street-type aliases.
- * Exported for direct unit-testing.
+ * Normalize an address for whole-token comparison: lowercase, strip
+ * punctuation, collapse whitespace (delegated to realty-core's
+ * `normalizeAddressForCompare`), then fold each street-type token to its
+ * canonical abbreviation via the cohort `SUFFIX_PAIRS`. Exported for
+ * direct unit-testing.
  */
 export function normalizeAddressForMatch(s: string | undefined): string {
-  if (!s) return '';
-  let out = s
-    .toLowerCase()
-    .normalize('NFKD')
-    .replace(/[̀-ͯ]/g, '')
-    .replace(/[.,#\/\\]/g, ' ')
-    .replace(/\s+/g, ' ')
-    .trim();
-  for (const [re, repl] of STREET_TYPE_CANON) out = out.replace(re, repl);
-  return out.replace(/\s+/g, ' ').trim();
+  const base = normalizeAddressForCompare(s);
+  if (!base) return '';
+  return base
+    .split(' ')
+    .map((tok) => SUFFIX_FOLD.get(tok) ?? tok)
+    .join(' ');
 }
 
 /**
@@ -189,13 +190,6 @@ export function addressMatchesQuery(
   }
   return true;
 }
-
-/**
- * Re-export of `extractPidFromUrl` under its original tool-local name
- * for back-compat with callers that imported it from this module before
- * it was promoted to `src/url.ts`.
- */
-export { extractPidFromUrl as extractPidFromNavigationPageLink } from '../url.js';
 
 /** Which rung produced a successful resolution. */
 export type MatchedVia = 'typeahead' | 'freetext' | 'search_fallback';
@@ -451,18 +445,52 @@ export async function resolveOneAddress(
   return { resolved: false, error: 'no listing matched the address' };
 }
 
+const COMPASS_ORIGIN = 'https://www.compass.com';
+
+/** Absolute-ize a Compass relative link (no-op if already absolute). */
+function absoluteCompassUrl(link: string): string {
+  return /^https?:/i.test(link) ? link : `${COMPASS_ORIGIN}${link}`;
+}
+
+/**
+ * Build a Compass listing's absolute URL from whatever link fields the
+ * listing carries. The single canonical URL ladder — every call site
+ * (the `format()` `url` block, `buildPortalUrlHyperlink`, and
+ * `buildListingUrl`) routes through this so the `_pid`/`_lid`/slug-less
+ * fallback logic lives in exactly one place. Kept local because the
+ * `_pid/` ↔ `_lid/` URL scheme is compass-specific.
+ *
+ * Two preference orders, both ending in the slug-less `/homedetails/
+ * <sha>_lid/` last resort:
+ *
+ *   - `prefer: 'pid'` (default): the stable `_pid/` `navigationPageLink`
+ *     first, then the slugged `pageLink` (issue #27 — sha URLs go stale
+ *     on relisting, so stable references want the pid form).
+ *   - `prefer: 'pageLink'`: the slugged `pageLink` (`_lid/`) first, then
+ *     the `_pid/` `navigationPageLink` — the form `compass_get_property`
+ *     returns as `url`, the right shape for *reading* the current
+ *     listing record (issue #15).
+ */
+export function compassListingUrl(
+  listing: RawListingLike,
+  opts: { prefer?: 'pid' | 'pageLink' } = {}
+): string {
+  const ladder =
+    opts.prefer === 'pageLink'
+      ? [listing.pageLink, listing.navigationPageLink]
+      : [listing.navigationPageLink, listing.pageLink];
+  for (const link of ladder) {
+    if (link) return absoluteCompassUrl(link);
+  }
+  return `${COMPASS_ORIGIN}/homedetails/${listing.listingIdSHA ?? ''}_lid/`;
+}
+
 /**
  * Translate a resolved listing into the canonical URL form. Prefers the
  * stable `_pid/` URL (issue #27) when present.
  */
 export function buildListingUrl(listing: RawListingLike): string {
-  if (listing.navigationPageLink) {
-    return `https://www.compass.com${listing.navigationPageLink}`;
-  }
-  if (listing.pageLink) {
-    return `https://www.compass.com${listing.pageLink}`;
-  }
-  return `https://www.compass.com/homedetails/${listing.listingIdSHA}_lid/`;
+  return compassListingUrl(listing, { prefer: 'pid' });
 }
 
 export function registerByAddressTools(

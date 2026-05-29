@@ -21,7 +21,7 @@ describe('compass_get_saved_homes (placeholder)', () => {
     const r = await harness.callTool('compass_get_saved_homes', {});
     expect(r.isError).toBeTruthy();
     const text = (r.content[0] as { text: string }).text;
-    expect(text).toMatch(/v0\.1\.0 doesn['’]t yet wire/);
+    expect(text).toMatch(/0\.10\.0 doesn['’]t yet wire/);
   });
 
   it('compass_get_saved_searches throws the same way', async () => {

@@ -1,10 +1,9 @@
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import type { CompassClient } from '../client.js';
-import { textResult } from '../mcp.js';
 
 /**
  * Compass account surfaces (favorites + saved searches) are a known
- * v0.1.0 gap. Both the consumer dashboard at /overview/favorites and
+ * gap. Both the consumer dashboard at /overview/favorites and
  * the saved-searches page are fully client-rendered SPAs — they don't
  * embed listing data into the initial HTML, and Compass hasn't yet
  * exposed a public JSON path we can call from a browser session.
@@ -23,7 +22,7 @@ import { textResult } from '../mcp.js';
  */
 
 const NOT_YET_SUPPORTED =
-  "compass-mcp v0.1.0 doesn't yet wire up saved listings / saved searches. " +
+  "compass-mcp 0.10.0 doesn't yet wire up saved listings / saved searches. " +
   "Compass renders these pages via an auth-scoped GraphQL endpoint that " +
   "isn't reachable from a one-shot fetchproxy call. Track the issue at " +
   'https://github.com/chrischall/compass-mcp/issues — a future version will land this once the endpoint is identified.';
@@ -37,7 +36,7 @@ export function registerSavedTools(
     {
       title: 'Get my saved (favorited) Compass homes',
       description:
-        'Not yet supported in v0.1.0 — Compass renders /overview/favorites via an auth-scoped GraphQL we have not yet identified. Throws a clear error explaining the limitation.',
+        'Not yet supported — Compass renders /overview/favorites via an auth-scoped GraphQL we have not yet identified. Throws a clear error explaining the limitation.',
       annotations: {
         title: 'Get my saved (favorited) Compass homes',
         readOnlyHint: true,
@@ -56,7 +55,7 @@ export function registerSavedTools(
     {
       title: 'Get my saved Compass searches',
       description:
-        'Not yet supported in v0.1.0 — Compass renders saved searches via an auth-scoped GraphQL we have not yet identified. Throws a clear error explaining the limitation.',
+        'Not yet supported — Compass renders saved searches via an auth-scoped GraphQL we have not yet identified. Throws a clear error explaining the limitation.',
       annotations: {
         title: 'Get my saved Compass searches',
         readOnlyHint: true,
@@ -70,7 +69,3 @@ export function registerSavedTools(
     }
   );
 }
-
-// Marker to keep `textResult` import for forward-compat when we wire
-// the tools properly.
-export const __reservedForLater = textResult;

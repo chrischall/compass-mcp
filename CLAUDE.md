@@ -4,7 +4,7 @@ Guidance for Claude working in this repo.
 
 ## TL;DR
 
-v0.1.0: Compass MCP server. Default and only transport: localhost WebSocket via [`@fetchproxy/server`](https://github.com/chrischall/fetchproxy) — the companion browser extension is installed separately rather than embedded. Every HTTP call to compass.com is dispatched through the user's signed-in Chrome tab — each request rides their existing session (cookies, TLS, JS context) exactly as if they'd clicked it themselves.
+Compass MCP server. Default and only transport: localhost WebSocket via [`@fetchproxy/server`](https://github.com/chrischall/fetchproxy) — the companion browser extension is installed separately rather than embedded. Every HTTP call to compass.com is dispatched through the user's signed-in Chrome tab — each request rides their existing session (cookies, TLS, JS context) exactly as if they'd clicked it themselves.
 
 This is a "Pattern A" fetchproxy MCP (every call rides through fetchproxy), not "Pattern B" (one bootstrap call then direct fetch). Compass validates each request at the session level, so the in-session routing has to be per-call.
 
@@ -17,12 +17,18 @@ This is a "Pattern A" fetchproxy MCP (every call rides through fetchproxy), not 
 | `compass_get_property_photos` | `tools/photos.ts` | Same SSR page as `get_property` — `listing.media[]` | read |
 | `compass_get_price_history` | `tools/history.ts` | Same SSR page — `listing.events[]` + `listing.history[]` | read |
 | `compass_compare_properties` | `tools/compare.ts` | Concurrent `get_property` calls across N targets | read |
-| `compass_get_saved_homes` | `tools/saved.ts` | **Not yet supported in v0.1.0** — placeholder that throws a clear error | read (auth, todo) |
-| `compass_get_saved_searches` | `tools/saved.ts` | **Not yet supported in v0.1.0** — placeholder that throws a clear error | read (auth, todo) |
-| `compass_calculate_mortgage` | `tools/mortgage.ts` | (local; no network) | read |
-| `compass_calculate_affordability` | `tools/affordability.ts` | (local; no network) | read |
-| `compass_get_by_address` | `tools/by-address.ts` | `GET /homes-for-sale/?q=<address>` SSR — extract top `lolResults.data[]` entry | read |
+| `compass_bulk_get` | `tools/bulk-get.ts` | Concurrent `get_property` calls across up to 200 targets (by `url` or `listing_id_sha`); one row per target, no summary | read |
+| `compass_get_comparable_rentals` | `tools/comparable-rentals.ts` | Lift target locality from homedetails, then `GET /homes-for-sale/<slug>/type-rental/` SSR for nearby rentals | read |
+| `compass_get_saved_homes` | `tools/saved.ts` | **Not yet supported** — placeholder that throws a clear error | read (auth, todo) |
+| `compass_get_saved_searches` | `tools/saved.ts` | **Not yet supported** — placeholder that throws a clear error | read (auth, todo) |
+| `compass_calculate_mortgage` | `tools/mortgage.ts` | (local; no network) — delegates to realty-core `calculateMortgage` | read |
+| `compass_calculate_affordability` | `tools/affordability.ts` | (local; no network) — delegates to realty-core `calculateAffordability` | read |
+| `compass_get_by_address` | `tools/by-address.ts` | `POST /api/v3/omnisuggest/autocomplete` (WAF-immune typeahead, primary) → SSR `/homes-for-sale/?q=` / `<slug>/` fallbacks; verifies each candidate | read |
+| `compass_resolve_addresses` | `tools/resolve-addresses.ts` | Bulk `get_by_address` — concurrent server-side resolution of many addresses, one round trip, shared rung walker + per-row error contract | read |
 | `compass_get_agent_listings` | `tools/agent-listings.ts` | `GET /agents/<slug>/` SSR — extract `window.__AGENT_PROFILE__.data.agentProfileProps.activeListingsProps.initialSales[]` (+ `closedDealsProps.initialSales[].listing` when `include_closed`) | read |
+| `compass_healthcheck` | `tools/healthcheck.ts` | Round-trips a no-op `GET /robots.txt` through the bridge to confirm bridge + extension + tab are responsive | read |
+| `compass_get_session_context` | `tools/session.ts` | Lists every registered session + the active session id | read |
+| `compass_set_active_session` | `tools/session.ts` | Flips which registered session answers future requests | read |
 
 ## Architecture
 
@@ -35,19 +41,26 @@ src/
   client.ts             # CompassClient.fetchHtml / fetchJson
                         #   + sign-in detection (WAF challenge / /login redirect)
   page-state.ts         # extractUc + extractInitialData + extractAgentProfile + balanced-brace helpers
-  url.ts                # urlToPath + locationToSlug
+  url.ts                # extractPidFromUrl + extractAgentSlug + agentProfilePath
+                        #   (urlToPath + locationToSlug re-exported from realty-core)
   mcp.ts                # textResult() result-wrapper
   tools/
     search.ts           # compass_search_properties (buildSearchPath + formatHome)
-    properties.ts       # compass_get_property (fetchListingRecord + format)
+    properties.ts       # compass_get_property (fetchListingRecord + format + resolvePathFromSha)
     photos.ts           # compass_get_property_photos (listing.media[])
     history.ts          # compass_get_price_history (events + history)
-    compare.ts          # compass_compare_properties (concurrent get_property)
-    saved.ts            # compass_get_saved_homes + compass_get_saved_searches (v0.1 stubs)
-    mortgage.ts         # compass_calculate_mortgage (local PITI)
-    affordability.ts    # compass_calculate_affordability (local DTI math)
-    by-address.ts       # compass_get_by_address (address → canonical URL + ids)
+    compare.ts          # compass_compare_properties (concurrent get_property, ≤25)
+    bulk-get.ts         # compass_bulk_get (concurrent get_property, ≤200, no summary)
+    comparable-rentals.ts # compass_get_comparable_rentals (locality → rentals search)
+    saved.ts            # compass_get_saved_homes + compass_get_saved_searches (stubs)
+    mortgage.ts         # compass_calculate_mortgage (realty-core calculateMortgage + adapter)
+    affordability.ts    # compass_calculate_affordability (realty-core calculateAffordability)
+    by-address.ts       # compass_get_by_address (address → canonical URL + ids; typeahead rung)
+    resolve-addresses.ts # compass_resolve_addresses (bulk by-address, shared rung walker)
+    typeahead.ts        # omnisuggest autocomplete helpers (WAF-immune resolution rung)
     agent-listings.ts   # compass_get_agent_listings (/agents/<slug>/ __AGENT_PROFILE__ → active + closed listings)
+    healthcheck.ts      # compass_healthcheck (no-op /robots.txt round-trip through the bridge)
+    session.ts          # compass_get_session_context + compass_set_active_session
 
 tests/                  # 1:1 mirror of src/, plus tests/helpers.ts harness.
                         #   All tests mock CompassClient.fetchHtml.
@@ -88,11 +101,11 @@ COMPASS_WS_PORT=37149   # override the fetchproxy WebSocket port
 
 ## Compass quirks
 
-- **No stingray-style JSON API.** Unlike Redfin, Compass doesn't expose `/api/...` endpoints we can call directly from a signed-in browser. Every tool extracts state from a SSR page's inline scripts.
+- **No public JSON data-API; SSR inline scripts instead.** Unlike Redfin, Compass doesn't expose listing/search data through `/api/...` endpoints — those tools extract state from each SSR page's inline scripts. The one structured endpoint Compass does serve to the browser is the omnisuggest address autocomplete (`POST /api/v3/omnisuggest/autocomplete`), which is WAF-immune and powers address + sha resolution (`tools/typeahead.ts`, issues #78/#79) — the only place `client.fetchJson` is used.
 - **Two state globals.** Search pages set `global.uc = {...}` with results at `uc.sharedReactAppProps.initialResults.lolResults.data[]`. Homedetails pages set `window.__INITIAL_DATA__ = {...}` with the listing at `props.listingRelation.listing`. `src/page-state.ts` extracts both via balanced-brace parsing.
 - **listing.media[] for photos.** Each photo carries `originalUrl` (full-res) and `thumbnailUrl` (~640×480), plus `width`/`height` and a `category` (0 = photo, non-zero = floorplan/other).
 - **events vs. history.** `events[]` is this listing's MLS events; `history[]` aggregates events from prior listings of the same property. We surface both — `get_price_history` returns parallel arrays + counts.
-- **No public saved-listings endpoint.** `/overview/favorites` is fully client-rendered via auth-scoped GraphQL. The v0.1 surface stubs the tools out with a clear "not yet supported" error and a link to the tracking issue. A future Pattern-B bootstrap (intercept the GraphQL response from the live tab) could unlock this.
+- **No public saved-listings endpoint.** `/overview/favorites` is fully client-rendered via auth-scoped GraphQL. The current surface stubs the tools out with a clear "not yet supported" error and a link to the tracking issue. A future Pattern-B bootstrap (intercept the GraphQL response from the live tab) could unlock this.
 - **No market-trends endpoint.** Compass doesn't expose region-level market data in the SSR blob the way Redfin's `market-trends` endpoint does. Deferred to a later version pending more probing.
 - **Sign-in detection.** `src/client.ts::throwIfSignInPage` flags `/login` URL redirects and the AWS WAF challenge interstitial (body matches both `awswaf.com` AND `challenge.js` AND body < 80 KB).
 

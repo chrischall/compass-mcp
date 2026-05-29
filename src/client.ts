@@ -1,16 +1,18 @@
 // CompassClient is the thin, tool-facing API over a CompassTransport.
 //
-// Compass is a fully SSR React app — there's no clean stingray-style
-// JSON API surface exposed to the browser, and the data we need lives
+// Compass is a fully SSR React app — there's no public JSON data-API
+// surface exposed to the browser, and most of the data we need lives
 // inside two inline-script globals on each rendered page:
 //
 //   - `window.uc.sharedReactAppProps.initialResults` (search results)
 //   - `window.__INITIAL_DATA__.props.listingRelation.listing` (homedetails)
 //
-// So the client surface is intentionally minimal: `fetchHtml` for SSR
-// pages, plus `fetchJson` kept for any direct API endpoints we find
-// later. Both ride through fetchproxy so the user's signed-in
-// compass.com session does the actual HTTP.
+// So the client surface is small: `fetchHtml` for those SSR pages, plus
+// `fetchJson` — which IS in active use for the one structured endpoint
+// Compass does expose to the browser, the omnisuggest address
+// autocomplete (`/api/v3/omnisuggest/autocomplete`) that powers address
+// + sha resolution (issues #78/#79). Both ride through fetchproxy so the
+// user's signed-in compass.com session does the actual HTTP.
 //
 // Error mapping (non-2xx, sign-in interstitial, empty 204 body) lives
 // here so tool authors never have to think about it.
@@ -151,9 +153,13 @@ export class CompassClient {
 
   /**
    * POST/PUT/DELETE a JSON body, return the parsed JSON. Throws on
-   * non-2xx, invalid JSON, or sign-in page. Currently unused — kept for
-   * forward compatibility if Compass exposes a usable JSON API for
-   * saved-listings or similar.
+   * non-2xx, invalid JSON, or sign-in page. This is the PRIMARY resolver
+   * path: the address resolver (`compass_get_by_address` /
+   * `compass_resolve_addresses`) and sha resolution
+   * (`resolvePathFromSha`, used by get_property / photos / history /
+   * compare / bulk_get) both POST to the WAF-immune omnisuggest
+   * autocomplete endpoint through here (issues #78/#79). Also kept ready
+   * for any future Compass JSON API (saved-listings or similar).
    *
    * The serialization / header-defaults / 204-handling / JSON.parse all
    * live in `transport.requestJson()` (fetchproxy 0.10.0's `requestJson`

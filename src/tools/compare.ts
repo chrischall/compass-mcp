@@ -2,6 +2,7 @@ import { z } from 'zod';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import {
   BRIDGE_CONCURRENCY,
+  classifyRowError,
   mapWithConcurrency,
   retryOnceOnTimeout,
 } from '@fetchproxy/server';
@@ -31,6 +32,17 @@ interface CompareRow {
   url?: string;
   property?: FormattedProperty;
   error?: string;
+  /**
+   * Transport-fault marker (#73/#85). Present ONLY when the per-row
+   * failure was a bridge timeout (after the one-shot retry burned) or an
+   * unreachable bridge — categorically NOT a genuine no-listing. Mirrors
+   * the `compass_bulk_get` / `compass_resolve_addresses` discipline: a
+   * row with `status` is retryable, not a clean miss. A genuine miss
+   * (parse failure, restricted listing, protocol fault) carries only
+   * `error` with no `status`/`retryable`.
+   */
+  status?: 'timeout' | 'bridge_down';
+  retryable?: true;
 }
 
 interface SummaryRow {
@@ -149,11 +161,25 @@ export function registerCompareTools(
               }),
             };
           } catch (e) {
-            return {
+            // Share the cohort-standard error contract with
+            // `compass_bulk_get` / `compass_resolve_addresses` (#73/#85).
+            // `classifyRowError` runs AFTER `retryOnceOnTimeout` has burned
+            // its one-shot retry, so a `timeout` here means the bridge
+            // stayed unresponsive across two attempts. A transport fault
+            // (timeout / bridge_down) is NOT a genuine miss — flag it
+            // `retryable` with a distinct `status`. `protocol` / `other`
+            // keep the plain `error` (genuine miss / parse failure).
+            const { kind, message } = classifyRowError(e);
+            const row: CompareRow = {
               listing_id_sha: t.listing_id_sha,
               url: t.url,
-              error: (e as Error).message,
+              error: message,
             };
+            if (kind === 'timeout' || kind === 'bridge_down') {
+              row.status = kind;
+              row.retryable = true;
+            }
+            return row;
           }
         }
       );
