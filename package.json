@@ -1,6 +1,6 @@
 {
   "name": "compass-mcp",
-  "version": "0.10.0",
+  "version": "0.11.0",
   "mcpName": "io.github.chrischall/compass-mcp",
   "description": "Compass MCP server for Claude — developed and maintained by AI (Claude Code)",
   "author": "Claude Code (AI) <https://www.anthropic.com/claude>",
