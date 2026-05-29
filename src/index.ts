@@ -32,7 +32,7 @@ import { registerSessionTools } from './tools/session.js';
 import { registerComparableRentalsTools } from './tools/comparable-rentals.js';
 import { registerAgentListingsTools } from './tools/agent-listings.js';
 
-const VERSION = '0.10.0'; // x-release-please-version
+const VERSION = '0.11.0'; // x-release-please-version
 
 const port = process.env.COMPASS_WS_PORT
   ? Number(process.env.COMPASS_WS_PORT)

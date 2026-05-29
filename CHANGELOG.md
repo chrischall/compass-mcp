@@ -1,5 +1,23 @@
 # Changelog
 
+## [0.11.0](https://github.com/chrischall/compass-mcp/compare/v0.10.0...v0.11.0) (2026-05-29)
+
+
+### Features
+
+* adopt @fetchproxy/server 0.11.0 parsing helpers (drop local copies) + realty-core 0.4.1 ([#97](https://github.com/chrischall/compass-mcp/issues/97)) ([dbd3f55](https://github.com/chrischall/compass-mcp/commit/dbd3f558426cbdcac34d47d5513532c65af71e10))
+* compass_get_agent_listings — other listings by the same agent ([#52](https://github.com/chrischall/compass-mcp/issues/52)) ([#94](https://github.com/chrischall/compass-mcp/issues/94)) ([d38a944](https://github.com/chrischall/compass-mcp/commit/d38a944ed0bd6d7464fa71a6615b355aab70a80b))
+
+
+### Bug Fixes
+
+* **ci:** arm auto-merge from verdict comment when structured_output is empty ([#93](https://github.com/chrischall/compass-mcp/issues/93)) ([720e2c9](https://github.com/chrischall/compass-mcp/commit/720e2c991fb256e2952b40e4466d0ffb4f0c7129))
+* **ci:** treat instant-merge race as success in auto-merge arm ([#91](https://github.com/chrischall/compass-mcp/issues/91)) ([856aa10](https://github.com/chrischall/compass-mcp/commit/856aa101a29d27b8ed83ed29a3132ef04bc0f70c))
+* classify bulk-get per-row errors with classifyRowError ([#92](https://github.com/chrischall/compass-mcp/issues/92)) ([fc33496](https://github.com/chrischall/compass-mcp/commit/fc33496358e86401bea159ee20e4173c8bc895db))
+* prefer resolvable _pid/ URL over slug-less _lid/ in format() ([#15](https://github.com/chrischall/compass-mcp/issues/15)) ([#90](https://github.com/chrischall/compass-mcp/issues/90)) ([7d40f84](https://github.com/chrischall/compass-mcp/commit/7d40f84f0db1b24580f6532c5cdbf5dee196ebaa))
+* resolver timeout classification, search-fallback recall, and honest pagination ([#88](https://github.com/chrischall/compass-mcp/issues/88)) ([a42f0fb](https://github.com/chrischall/compass-mcp/commit/a42f0fbcdf743a009023427704685fc87f4fd796))
+* **resolver:** resolve listing_id_sha via /listing/&lt;sha&gt;/view redirect (omnisuggest returns nothing for a sha) ([#96](https://github.com/chrischall/compass-mcp/issues/96)) ([e43cbd7](https://github.com/chrischall/compass-mcp/commit/e43cbd796db77d079ce2b1f71cb14b365ef1ffe2))
+
 ## [0.10.0](https://github.com/chrischall/compass-mcp/compare/v0.9.0...v0.10.0) (2026-05-29)
 
 
