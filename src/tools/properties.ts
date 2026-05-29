@@ -3,7 +3,7 @@ import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import type { CompassClient } from '../client.js';
 import { textResult } from '../mcp.js';
 import { extractInitialData, extractUc } from '../page-state.js';
-import { extractPidFromUrl, urlToPath } from '../url.js';
+import { extractAgentSlug, extractPidFromUrl, urlToPath } from '../url.js';
 import { findLolResults } from './search.js';
 import { loadCommunities } from '../features.js';
 import {
@@ -94,6 +94,13 @@ export interface RawListingAgent {
   companyName?: string;
   email?: string;
   phone?: string;
+  /**
+   * Agent's Compass profile href (`/agents/<slug>/` or the absolute form).
+   * Surfaced as `listing_agent.profile_slug` / `profile_url` so a caller
+   * can chain property → agent → their other listings via
+   * `compass_get_agent_listings`. (Issue #52.)
+   */
+  profileUrl?: string;
 }
 
 /**
@@ -318,16 +325,26 @@ export interface FormattedProperty {
   }>;
   /**
    * Primary listing agent (first entry in the upstream `agents[]`).
-   * Omitted when no agents are present. (Issue #52.) The full inline
-   * agent-history block called out in #52 isn't implemented here —
-   * Compass doesn't expose the agent's other listings on the
-   * homedetails record; surfacing the agent id is the minimal honest
-   * step until that data path is plumbed.
+   * Omitted when no agents are present. (Issue #52.) Includes the agent's
+   * `profile_slug` / `profile_url` when the listing's agent record carries
+   * a `/agents/<slug>/` href — feed that into `compass_get_agent_listings`
+   * to pull the agent's *other* listings. The agent's listing history is
+   * served by the agent-profile SSR blob (`window.__AGENT_PROFILE__` on
+   * `/agents/<slug>/`), parsed by `tools/agent-listings.ts`.
    */
   listing_agent?: {
     id?: string;
     name?: string;
     brokerage?: string;
+    /**
+     * Agent's profile slug (the `<slug>` in `/agents/<slug>/`). Present
+     * when the listing's agent record carries a profile href. Feed it
+     * straight into `compass_get_agent_listings` to pull the agent's
+     * other listings. (Issue #52.)
+     */
+    profile_slug?: string;
+    /** Canonical `https://www.compass.com/agents/<slug>/` profile URL. (Issue #52.) */
+    profile_url?: string;
   };
 }
 
@@ -624,6 +641,19 @@ export function format(
       name: primaryAgent.fullName ?? composedName,
       brokerage: primaryAgent.companyName,
     };
+    // Profile slug/url for property → agent → their-listings chaining
+    // (issue #52). `extractAgentSlug` throws on a non-`/agents/` href, so
+    // guard with a try/catch: a malformed profileUrl just means we omit
+    // the chain fields rather than failing the whole property fetch.
+    if (primaryAgent.profileUrl) {
+      try {
+        const slug = extractAgentSlug(primaryAgent.profileUrl);
+        listingAgent.profile_slug = slug;
+        listingAgent.profile_url = `https://www.compass.com/agents/${slug}/`;
+      } catch {
+        // Non-/agents/ href — leave the chain fields undefined.
+      }
+    }
   }
   return {
     listing_id_sha: listing.listingIdSHA,

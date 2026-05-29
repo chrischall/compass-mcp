@@ -22,6 +22,7 @@ This is a "Pattern A" fetchproxy MCP (every call rides through fetchproxy), not 
 | `compass_calculate_mortgage` | `tools/mortgage.ts` | (local; no network) | read |
 | `compass_calculate_affordability` | `tools/affordability.ts` | (local; no network) | read |
 | `compass_get_by_address` | `tools/by-address.ts` | `GET /homes-for-sale/?q=<address>` SSR — extract top `lolResults.data[]` entry | read |
+| `compass_get_agent_listings` | `tools/agent-listings.ts` | `GET /agents/<slug>/` SSR — extract `window.__AGENT_PROFILE__.data.agentProfileProps.activeListingsProps.initialSales[]` (+ `closedDealsProps.initialSales[].listing` when `include_closed`) | read |
 
 ## Architecture
 
@@ -33,7 +34,7 @@ src/
   transport-fetchproxy.ts # adapter over @fetchproxy/server's FetchproxyServer
   client.ts             # CompassClient.fetchHtml / fetchJson
                         #   + sign-in detection (WAF challenge / /login redirect)
-  page-state.ts         # extractUc + extractInitialData + balanced-brace helpers
+  page-state.ts         # extractUc + extractInitialData + extractAgentProfile + balanced-brace helpers
   url.ts                # urlToPath + locationToSlug
   mcp.ts                # textResult() result-wrapper
   tools/
@@ -46,6 +47,7 @@ src/
     mortgage.ts         # compass_calculate_mortgage (local PITI)
     affordability.ts    # compass_calculate_affordability (local DTI math)
     by-address.ts       # compass_get_by_address (address → canonical URL + ids)
+    agent-listings.ts   # compass_get_agent_listings (/agents/<slug>/ __AGENT_PROFILE__ → active + closed listings)
 
 tests/                  # 1:1 mirror of src/, plus tests/helpers.ts harness.
                         #   All tests mock CompassClient.fetchHtml.

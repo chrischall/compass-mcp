@@ -42,3 +42,46 @@ export function extractPidFromUrl(
   const m = /\/([A-Za-z0-9]+)_pid\/?$/.exec(link);
   return m ? m[1] : undefined;
 }
+
+/**
+ * Normalize an agent reference to its profile slug. Accepts (issue #52):
+ *
+ *   - a bare slug:            `paige-mcguirk`
+ *   - an `/agents/<slug>/` path (leading slash optional, trailing optional)
+ *   - a full profile URL:     `https://www.compass.com/agents/paige-mcguirk/`
+ *
+ * Query strings and fragments are ignored. Throws on empty input, and on a
+ * compass URL/path that isn't an `/agents/` profile reference (so a caller
+ * who fat-fingers a homedetails URL gets a clear error rather than a
+ * silently-wrong fetch).
+ */
+export function extractAgentSlug(slugOrUrl: string): string {
+  const trimmed = (slugOrUrl ?? '').trim();
+  if (!trimmed) {
+    throw new Error(
+      'compass agent tool: an agent `slug` or `profile_url` is required (e.g. "paige-mcguirk" or "https://www.compass.com/agents/paige-mcguirk/").'
+    );
+  }
+  // URL or path form: pull the segment after `/agents/`.
+  if (/[/]/.test(trimmed) || /^https?:/i.test(trimmed)) {
+    const m = /\/agents\/([^/?#]+)/.exec(trimmed);
+    if (!m) {
+      throw new Error(
+        `compass agent tool: "${slugOrUrl}" is not a Compass agent profile URL. ` +
+          'Expected a bare slug or a /agents/<slug>/ URL.'
+      );
+    }
+    return m[1];
+  }
+  // Bare slug.
+  return trimmed;
+}
+
+/**
+ * Build the `/agents/<slug>/` path the FetchproxyTransport fetches from a
+ * slug or any accepted agent reference (delegates to `extractAgentSlug`).
+ * (Issue #52.)
+ */
+export function agentProfilePath(slugOrUrl: string): string {
+  return `/agents/${extractAgentSlug(slugOrUrl)}/`;
+}

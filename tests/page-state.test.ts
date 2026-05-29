@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import {
+  extractAgentProfile,
   extractBalancedObject,
   extractGlobalAssign,
   extractInitialData,
@@ -66,5 +67,31 @@ describe('extractUc / extractInitialData wrappers', () => {
     expect(extractInitialData(html)).toEqual({
       props: { listingRelation: { listing: { listingIdSHA: 'abc' } } },
     });
+  });
+
+  it('extractAgentProfile finds the __AGENT_PROFILE__ global', () => {
+    // Agent profile pages (/agents/<slug>/) embed a `window.__AGENT_PROFILE__`
+    // blob rather than `__NEXT_DATA__` / `__INITIAL_DATA__`.
+    const html =
+      '<script>window.__AGENT_PROFILE__ = {"data":{"agentProfileProps":{"activeListingsProps":{"initialSales":[{"listingIdSHA":"x"}]}}}};</script>';
+    expect(extractAgentProfile(html)).toEqual({
+      data: {
+        agentProfileProps: {
+          activeListingsProps: { initialSales: [{ listingIdSHA: 'x' }] },
+        },
+      },
+    });
+  });
+
+  it('extractAgentProfile also accepts the `global.` assignment form', () => {
+    const html =
+      '<script>global.__AGENT_PROFILE__ = {"data":{"agentProfileProps":{}}};</script>';
+    expect(extractAgentProfile(html)).toEqual({
+      data: { agentProfileProps: {} },
+    });
+  });
+
+  it('extractAgentProfile returns null when the blob is absent', () => {
+    expect(extractAgentProfile('<html>no agent blob</html>')).toBeNull();
   });
 });

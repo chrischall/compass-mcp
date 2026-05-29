@@ -1,5 +1,11 @@
 import { describe, it, expect } from 'vitest';
-import { extractPidFromUrl, locationToSlug, urlToPath } from '../src/url.js';
+import {
+  agentProfilePath,
+  extractAgentSlug,
+  extractPidFromUrl,
+  locationToSlug,
+  urlToPath,
+} from '../src/url.js';
 
 describe('urlToPath', () => {
   it('preserves a bare leading-slash path', () => {
@@ -43,6 +49,56 @@ describe('extractPidFromUrl', () => {
   it('returns undefined for undefined/empty input', () => {
     expect(extractPidFromUrl(undefined)).toBeUndefined();
     expect(extractPidFromUrl('')).toBeUndefined();
+  });
+});
+
+describe('extractAgentSlug (#52)', () => {
+  it('returns a bare slug unchanged', () => {
+    expect(extractAgentSlug('paige-mcguirk')).toBe('paige-mcguirk');
+  });
+
+  it('pulls the slug out of a full agent profile URL', () => {
+    expect(extractAgentSlug('https://www.compass.com/agents/paige-mcguirk/')).toBe(
+      'paige-mcguirk'
+    );
+  });
+
+  it('pulls the slug out of an /agents/<slug>/ path (with or without trailing slash)', () => {
+    expect(extractAgentSlug('/agents/paige-mcguirk/')).toBe('paige-mcguirk');
+    expect(extractAgentSlug('/agents/paige-mcguirk')).toBe('paige-mcguirk');
+  });
+
+  it('ignores query strings and fragments on a profile URL', () => {
+    expect(
+      extractAgentSlug('https://www.compass.com/agents/paige-mcguirk/?foo=1#bar')
+    ).toBe('paige-mcguirk');
+  });
+
+  it('trims surrounding whitespace', () => {
+    expect(extractAgentSlug('  paige-mcguirk  ')).toBe('paige-mcguirk');
+  });
+
+  it('throws on empty / missing input', () => {
+    expect(() => extractAgentSlug('')).toThrow(/slug/i);
+    expect(() => extractAgentSlug('   ')).toThrow(/slug/i);
+  });
+
+  it('throws when a compass URL is not an /agents/ profile URL', () => {
+    expect(() =>
+      extractAgentSlug('https://www.compass.com/homedetails/foo/abc_lid/')
+    ).toThrow(/agents/);
+  });
+});
+
+describe('agentProfilePath (#52)', () => {
+  it('builds the /agents/<slug>/ path from a slug', () => {
+    expect(agentProfilePath('paige-mcguirk')).toBe('/agents/paige-mcguirk/');
+  });
+
+  it('accepts a full profile URL and reduces it to the path', () => {
+    expect(
+      agentProfilePath('https://www.compass.com/agents/paige-mcguirk/')
+    ).toBe('/agents/paige-mcguirk/');
   });
 });
 

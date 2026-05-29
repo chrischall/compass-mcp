@@ -548,6 +548,64 @@ describe('compass_get_property tool', () => {
       const parsed = parseToolResult<{ listing_agent?: unknown }>(r);
       expect(parsed.listing_agent).toBeUndefined();
     });
+
+    it('surfaces profile_slug + profile_url so callers can chain to compass_get_agent_listings (#52)', () => {
+      // The listing-side agent record carries the agent's profile href
+      // (`/agents/<slug>/`). Surfacing the slug + url lets a caller go
+      // property → agent → their other listings.
+      const out = format({
+        listingIdSHA: 'a',
+        pageLink: '/x/a_lid/',
+        agents: [
+          {
+            id: 'agent-1',
+            fullName: 'Paige McGuirk',
+            companyName: 'Compass',
+            profileUrl: '/agents/paige-mcguirk/',
+          },
+        ],
+      });
+      expect(out.listing_agent).toEqual({
+        id: 'agent-1',
+        name: 'Paige McGuirk',
+        brokerage: 'Compass',
+        profile_slug: 'paige-mcguirk',
+        profile_url: 'https://www.compass.com/agents/paige-mcguirk/',
+      });
+    });
+
+    it('normalizes an absolute agent profileUrl to slug + canonical url (#52)', () => {
+      const out = format({
+        listingIdSHA: 'a',
+        pageLink: '/x/a_lid/',
+        agents: [
+          {
+            id: 'agent-1',
+            fullName: 'Paige McGuirk',
+            profileUrl: 'https://www.compass.com/agents/paige-mcguirk/',
+          },
+        ],
+      });
+      expect(out.listing_agent?.profile_slug).toBe('paige-mcguirk');
+      expect(out.listing_agent?.profile_url).toBe(
+        'https://www.compass.com/agents/paige-mcguirk/'
+      );
+    });
+
+    it('omits profile_slug/profile_url when the agent record has no profile href (#52)', () => {
+      const out = format({
+        listingIdSHA: 'a',
+        pageLink: '/x/a_lid/',
+        agents: [{ id: 'agent-1', fullName: 'No Profile' }],
+      });
+      expect(out.listing_agent).toEqual({
+        id: 'agent-1',
+        name: 'No Profile',
+        brokerage: undefined,
+      });
+      expect(out.listing_agent?.profile_slug).toBeUndefined();
+      expect(out.listing_agent?.profile_url).toBeUndefined();
+    });
   });
 
   describe('P1 derived schema (issues #36, #37, #38, #43, #44)', () => {
