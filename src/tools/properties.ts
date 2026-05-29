@@ -2,10 +2,15 @@ import { z } from 'zod';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import type { CompassClient } from '../client.js';
 import { textResult } from '../mcp.js';
-import { extractInitialData, extractUc } from '../page-state.js';
+import { extractInitialData } from '../page-state.js';
 import { extractAgentSlug, extractPidFromUrl, urlToPath } from '../url.js';
-import { findLolResults } from './search.js';
 import { loadCommunities } from '../features.js';
+import {
+  OMNISUGGEST_AUTOCOMPLETE_PATH,
+  extractAddressCandidates,
+  type AutocompleteBody,
+  type OmnisuggestResponse,
+} from './typeahead.js';
 import {
   extractFeatures,
   type ExtractedFeatures,
@@ -390,13 +395,22 @@ export function buildPath(args: {
 }
 
 /**
- * Resolve a `listing_id_sha` to a full `/homedetails/<slug>/<sha>_lid/`
- * path by querying Compass's site search. Compass's free-text search
- * endpoint accepts a listing-id-sha as a `q=` parameter and surfaces
- * the matching listing in `lolResults.data[]` with its canonical
- * `pageLink`.
+ * Resolve a `listing_id_sha` to a fetchable Compass homedetails path.
  *
- * Throws when no result matches — the error names the sha and points
+ * Routes through the structured omnisuggest typeahead — the same
+ * WAF-immune rung `compass_get_by_address` uses (issue #78/#79) — rather
+ * than the SSR free-text `/homes-for-sale/?q=<sha>` path, which compass.com
+ * 403s under AWS WAF (so sha-only `get_property` / `photos` / `history` /
+ * `compare` / `bulk_get` were failing in prod whenever they hit it).
+ *
+ * The omnisuggest `id` IS the `listingIdSHA`, so we POST the sha as `q`,
+ * find the candidate whose `id === sha`, and return its `redirectUrl`
+ * (the `/listing/<sha>/view` path the server redirects to the canonical
+ * homedetails page). The slug-less `/homedetails/<sha>_lid/` form 410s,
+ * so the redirect path is the reliable way to reach the listing record
+ * without already knowing the slug.
+ *
+ * Throws when no candidate matches — the error names the sha and points
  * the caller at the `url` field of a `compass_search_properties` result
  * as a manual fallback.
  */
@@ -404,23 +418,23 @@ export async function resolvePathFromSha(
   client: CompassClient,
   sha: string
 ): Promise<string> {
-  const searchPath = `/homes-for-sale/?q=${encodeURIComponent(sha)}`;
-  const html = await client.fetchHtml(searchPath);
-  const uc = extractUc(html);
-  const lol = uc ? findLolResults(uc) : null;
-  const match = (lol?.data ?? []).find(
-    (entry) => entry?.listing?.listingIdSHA === sha
+  const body: AutocompleteBody = { q: sha, sources: [0] };
+  const resp = await client.fetchJson<OmnisuggestResponse>(
+    OMNISUGGEST_AUTOCOMPLETE_PATH,
+    { method: 'POST', body }
   );
-  const pageLink = match?.listing?.pageLink;
-  if (!pageLink) {
+  const candidates = extractAddressCandidates(resp);
+  const match = candidates.find((c) => c.id === sha);
+  const redirectUrl = match?.redirectUrl;
+  if (!redirectUrl) {
     throw new Error(
-      `Could not resolve listing_id_sha "${sha}" to a Compass URL via site search. ` +
+      `Could not resolve listing_id_sha "${sha}" to a Compass URL via the omnisuggest typeahead. ` +
         `Compass returns 410 Gone for the slug-less /homedetails/<sha>_lid/ form, ` +
-        `and no /homes-for-sale/?q=<sha> result matched. If you have the address, ` +
+        `and no autocomplete candidate matched the sha. If you have the address, ` +
         `pass the \`url\` field from a compass_search_properties result instead.`
     );
   }
-  return urlToPath(pageLink);
+  return urlToPath(redirectUrl);
 }
 
 /**

@@ -4,7 +4,11 @@ import { buildSummary, registerCompareTools } from '../../src/tools/compare.js';
 import { createTestHarness, parseToolResult } from '../helpers.js';
 
 const mockFetchHtml = vi.fn();
-const mockClient = { fetchHtml: mockFetchHtml } as unknown as CompassClient;
+const mockFetchJson = vi.fn();
+const mockClient = {
+  fetchHtml: mockFetchHtml,
+  fetchJson: mockFetchJson,
+} as unknown as CompassClient;
 
 let harness: Awaited<ReturnType<typeof createTestHarness>>;
 beforeEach(() => vi.clearAllMocks());
@@ -108,28 +112,26 @@ describe('compass_compare_properties tool', () => {
 
   it('resolves sha-only targets internally and returns them alongside url targets', async () => {
     // Mixed batch: url-shaped target fetches normally; sha-only target
-    // first hits /homes-for-sale/?q=<sha> to recover the slug, then
-    // fetches the listing record. Both succeed without the caller
-    // having to know the slug.
-    const searchUc = {
-      sharedReactAppProps: {
-        initialResults: {
-          lolResults: {
-            data: [
-              {
-                listing: {
-                  listingIdSHA: '2079240952806311449',
-                  pageLink: '/homedetails/foo/2079240952806311449_lid/',
-                },
-              },
-            ],
-          },
+    // first hits the WAF-immune omnisuggest typeahead to recover the
+    // redirect path, then fetches the listing record. Both succeed
+    // without the caller having to know the slug.
+    mockFetchJson.mockResolvedValue({
+      categories: [
+        {
+          name: 1,
+          label: 'Addresses',
+          items: [
+            {
+              text: '155 Quail Cove Blvd',
+              id: '2079240952806311449',
+              redirectUrl: '/listing/2079240952806311449/view',
+            },
+          ],
         },
-      },
-    };
-    const searchHtml = `<html><script>global.uc = ${JSON.stringify(searchUc)};</script></html>`;
+      ],
+      success: true,
+    });
     mockFetchHtml.mockImplementation(async (path: string) => {
-      if (path.startsWith('/homes-for-sale/?q=')) return searchHtml;
       return htmlWith({
         listingIdSHA: path.includes('good') ? 'good' : '2079240952806311449',
         pageLink: path,

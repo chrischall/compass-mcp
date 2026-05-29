@@ -11,7 +11,11 @@ import {
 import { createTestHarness, parseToolResult } from '../helpers.js';
 
 const mockFetchHtml = vi.fn();
-const mockClient = { fetchHtml: mockFetchHtml } as unknown as CompassClient;
+const mockFetchJson = vi.fn();
+const mockClient = {
+  fetchHtml: mockFetchHtml,
+  fetchJson: mockFetchJson,
+} as unknown as CompassClient;
 
 let harness: Awaited<ReturnType<typeof createTestHarness>>;
 beforeEach(() => vi.clearAllMocks());
@@ -45,49 +49,68 @@ describe('buildPath', () => {
 });
 
 describe('resolvePathFromSha', () => {
-  it('searches /homes-for-sale/?q=<sha> and returns the matching pageLink', async () => {
-    const uc = {
-      sharedReactAppProps: {
-        initialResults: {
-          lolResults: {
-            data: [
-              {
-                listing: {
-                  listingIdSHA: '1887095624271872617',
-                  pageLink:
-                    '/homedetails/126-Sleeping-Bear-Ln-Lake-Lure-NC-28746/1887095624271872617_lid/',
-                },
-              },
-            ],
-          },
-        },
-      },
-    };
-    const html = `<html><script>global.uc = ${JSON.stringify(uc)};</script></html>`;
-    const fetchHtml = vi.fn().mockResolvedValueOnce(html);
-    const client = { fetchHtml } as unknown as CompassClient;
-
-    const path = await resolvePathFromSha(client, '1887095624271872617');
-    expect(fetchHtml).toHaveBeenCalledWith(
-      '/homes-for-sale/?q=1887095624271872617'
-    );
-    expect(path).toBe(
-      '/homedetails/126-Sleeping-Bear-Ln-Lake-Lure-NC-28746/1887095624271872617_lid/'
-    );
+  // Build an omnisuggest autocomplete response — the WAF-immune
+  // structured typeahead rung (issue #78/#79). The candidate `id` IS the
+  // `listingIdSHA`, and `redirectUrl` is the `/listing/<id>/view` path
+  // the server redirects to the canonical homedetails page.
+  const omnisuggest = (
+    items: Array<{ text?: string; subText?: string; id: string; redirectUrl?: string }>
+  ) => ({
+    categories: [{ name: 1, label: 'Addresses', items }],
+    success: true,
   });
 
-  it('throws a clear error when no result matches the sha', async () => {
-    const uc = {
-      sharedReactAppProps: {
-        initialResults: { lolResults: { data: [] } },
-      },
-    };
-    const fetchHtml = vi
-      .fn()
-      .mockResolvedValue(
-        `<html><script>global.uc = ${JSON.stringify(uc)};</script></html>`
-      );
-    const client = { fetchHtml } as unknown as CompassClient;
+  it('resolves the sha via the omnisuggest typeahead, NOT the WAF-walled ?q= SSR path', async () => {
+    const fetchJson = vi.fn().mockResolvedValueOnce(
+      omnisuggest([
+        {
+          text: '126 Sleeping Bear Ln',
+          subText: 'Lake Lure, NC',
+          id: '1887095624271872617',
+          redirectUrl: '/listing/1887095624271872617/view',
+        },
+      ])
+    );
+    const fetchHtml = vi.fn();
+    const client = { fetchHtml, fetchJson } as unknown as CompassClient;
+
+    const path = await resolvePathFromSha(client, '1887095624271872617');
+    // POSTs the sha as `q` to the WAF-immune autocomplete endpoint.
+    const [calledPath, init] = fetchJson.mock.calls[0];
+    expect(calledPath).toBe('/api/v3/omnisuggest/autocomplete');
+    expect(init).toMatchObject({ method: 'POST' });
+    expect((init as { body: { q: string } }).body.q).toBe('1887095624271872617');
+    // It returns the candidate's redirect path (resolves to homedetails).
+    expect(path).toBe('/listing/1887095624271872617/view');
+    // The WAF-walled SSR free-text path must NOT be touched.
+    expect(fetchHtml).not.toHaveBeenCalled();
+  });
+
+  it('picks the candidate whose id matches the sha (ignores other suggestions)', async () => {
+    const fetchJson = vi.fn().mockResolvedValueOnce(
+      omnisuggest([
+        { text: 'Other', id: 'wrong-sha', redirectUrl: '/listing/wrong-sha/view' },
+        {
+          text: '126 Sleeping Bear Ln',
+          id: '1887095624271872617',
+          redirectUrl: '/listing/1887095624271872617/view',
+        },
+      ])
+    );
+    const client = {
+      fetchHtml: vi.fn(),
+      fetchJson,
+    } as unknown as CompassClient;
+    const path = await resolvePathFromSha(client, '1887095624271872617');
+    expect(path).toBe('/listing/1887095624271872617/view');
+  });
+
+  it('throws a clear error when no autocomplete candidate matches the sha', async () => {
+    const fetchJson = vi.fn().mockResolvedValue(omnisuggest([]));
+    const client = {
+      fetchHtml: vi.fn(),
+      fetchJson,
+    } as unknown as CompassClient;
     await expect(resolvePathFromSha(client, 'unknown-sha')).rejects.toThrow(
       /unknown-sha/
     );
@@ -432,44 +455,38 @@ describe('compass_get_property tool', () => {
     expect(parsed.lot_size_acres).not.toBe(0);
   });
 
-  it('resolves a sha-only call by searching for the slug, then fetches the listing', async () => {
-    // Step 1: sha-only invocation triggers the resolver, which calls
-    // /homes-for-sale/?q=<sha> and looks for the matching lolResults entry.
-    const searchUc = {
-      sharedReactAppProps: {
-        initialResults: {
-          lolResults: {
-            totalItems: 1,
-            data: [
-              {
-                listing: {
-                  listingIdSHA: 'abc',
-                  pageLink: '/homedetails/foo/abc_lid/',
-                },
-              },
-            ],
-          },
+  it('resolves a sha-only call via the WAF-immune typeahead, then fetches the listing', async () => {
+    // Step 1: sha-only invocation triggers the resolver, which POSTs the
+    // sha to the omnisuggest autocomplete endpoint (NOT the WAF-walled
+    // /homes-for-sale/?q= SSR path) and reads the matching candidate's
+    // redirect path.
+    mockFetchJson.mockResolvedValueOnce({
+      categories: [
+        {
+          name: 1,
+          label: 'Addresses',
+          items: [{ text: '1 Main', id: 'abc', redirectUrl: '/listing/abc/view' }],
         },
-      },
-    };
-    const searchHtml = `<html><script>global.uc = ${JSON.stringify(searchUc)};</script></html>`;
+      ],
+      success: true,
+    });
     // Step 2: the resolver path is then fetched normally for the listing record.
     const listingHtml = htmlWith({
       listingIdSHA: 'abc',
       pageLink: '/homedetails/foo/abc_lid/',
       location: { prettyAddress: '1 Main' },
     });
-    mockFetchHtml
-      .mockResolvedValueOnce(searchHtml)
-      .mockResolvedValueOnce(listingHtml);
+    mockFetchHtml.mockResolvedValueOnce(listingHtml);
 
     const r = await harness.callTool('compass_get_property', {
       listing_id_sha: 'abc',
     });
     expect(r.isError).toBeFalsy();
+    // Resolution goes through the typeahead; only the resolved homedetails
+    // path is fetched as HTML — the WAF-walled ?q= rung is never hit.
+    expect(mockFetchJson.mock.calls[0][0]).toBe('/api/v3/omnisuggest/autocomplete');
     expect(mockFetchHtml.mock.calls.map((c) => c[0])).toEqual([
-      '/homes-for-sale/?q=abc',
-      '/homedetails/foo/abc_lid/',
+      '/listing/abc/view',
     ]);
     const parsed = parseToolResult<{ address: string; listing_id_sha: string }>(r);
     expect(parsed.address).toBe('1 Main');
@@ -477,16 +494,13 @@ describe('compass_get_property tool', () => {
   });
 
   it('returns a clear error when a sha-only call resolves to nothing', async () => {
-    // Resolver returns no matching entry → tool surfaces a helpful error
-    // that names the next-best-action: pass the `url` from a search result.
-    const searchUc = {
-      sharedReactAppProps: {
-        initialResults: { lolResults: { totalItems: 0, data: [] } },
-      },
-    };
-    mockFetchHtml.mockResolvedValueOnce(
-      `<html><script>global.uc = ${JSON.stringify(searchUc)};</script></html>`
-    );
+    // Resolver returns no matching candidate → tool surfaces a helpful
+    // error that names the next-best-action: pass the `url` from a search
+    // result.
+    mockFetchJson.mockResolvedValueOnce({
+      categories: [{ name: 1, label: 'Addresses', items: [] }],
+      success: true,
+    });
     const r = await harness.callTool('compass_get_property', {
       listing_id_sha: 'no-such-sha',
     });
