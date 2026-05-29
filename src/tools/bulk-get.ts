@@ -2,6 +2,7 @@ import { z } from 'zod';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import {
   BRIDGE_CONCURRENCY,
+  classifyRowError,
   mapWithConcurrency,
   retryOnceOnTimeout,
 } from '@fetchproxy/server';
@@ -45,6 +46,17 @@ interface BulkGetRow {
   url?: string;
   property?: FormattedProperty;
   error?: string;
+  /**
+   * Transport-fault marker (issue #73). Present ONLY when the per-row
+   * failure was a bridge timeout (after the one-shot retry burned) or
+   * an unreachable bridge — categorically NOT a genuine no-listing.
+   * Mirrors the `compass_resolve_addresses` discipline (#85): a row
+   * with `status` is retryable, not a clean miss. A genuine miss
+   * (parse failure, restricted listing, protocol fault) carries only
+   * `error` with no `status`/`retryable`.
+   */
+  status?: 'timeout' | 'bridge_down';
+  retryable?: true;
 }
 
 export function registerBulkGetTools(
@@ -59,7 +71,10 @@ export function registerBulkGetTools(
         `Fetch up to ${BULK_GET_MAX} Compass listings in a single call. Returns one structured row per input target ` +
         '(no side-by-side summary table — use `compass_compare_properties` for that). Each row is either ' +
         '`{ listing_id_sha, url, property }` on success or `{ listing_id_sha, url, error }` on failure — one bad ' +
-        'target never fails the whole call. Targets accept the same `url` / `listing_id_sha` shape as `compass_get_property`. ' +
+        'target never fails the whole call. When the failure was a bridge timeout (after one retry) or an unreachable ' +
+        'bridge (issue #73), the row also carries `{ status: "timeout" | "bridge_down", retryable: true }` — that is NOT ' +
+        'a missing listing, so retry it (a cold bridge usually succeeds on the second call) rather than concluding ' +
+        'Compass has no record. Targets accept the same `url` / `listing_id_sha` shape as `compass_get_property`. ' +
         'Calls fan out concurrently. `extracted_features` is populated per row. The raw `description` is omitted by ' +
         'default — pass `include_description: true` to keep it.',
       annotations: {
@@ -130,7 +145,22 @@ export function registerBulkGetTools(
               includeDescription: include_description,
             });
           } catch (e) {
-            row.error = e instanceof Error ? e.message : String(e);
+            // #73: classify the per-row failure with the cohort-standard
+            // `classifyRowError` (@fetchproxy/server) instead of an
+            // ad-hoc `e.message`. It runs AFTER `retryOnceOnTimeout` has
+            // already burned its one-shot retry, so a `timeout` here
+            // means the bridge stayed unresponsive across two attempts.
+            // A transport fault (timeout / bridge_down) is NOT a genuine
+            // miss — flag it `retryable` with a distinct `status` so a
+            // caller never reads a cold-bridge blip as "Compass has no
+            // listing". `protocol` / `other` keep the plain `error`
+            // (genuine miss / parse failure), preserving prior behavior.
+            const { kind, message } = classifyRowError(e);
+            row.error = message;
+            if (kind === 'timeout' || kind === 'bridge_down') {
+              row.status = kind;
+              row.retryable = true;
+            }
           }
           return row;
         }

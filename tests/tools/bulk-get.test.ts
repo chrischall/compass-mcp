@@ -1,4 +1,9 @@
 import { describe, it, expect, vi, beforeEach, afterAll } from 'vitest';
+import {
+  FetchproxyTimeoutError,
+  FetchproxyBridgeDownError,
+  FetchproxyProtocolError,
+} from '@fetchproxy/server';
 import type { CompassClient } from '../../src/client.js';
 import { registerBulkGetTools } from '../../src/tools/bulk-get.js';
 import { createTestHarness, parseToolResult } from '../helpers.js';
@@ -132,6 +137,105 @@ describe('compass_bulk_get tool', () => {
     const r = await harness.callTool('compass_bulk_get', { targets });
     const parsed = parseToolResult<{ count: number }>(r);
     expect(parsed.count).toBe(25);
+  });
+
+  it('marks a per-row bridge timeout (after retry) as a retryable transport fault, not a miss', async () => {
+    // #73: swap ad-hoc `e.message` to `classifyRowError`. A bridge
+    // timeout that survives the one-shot `retryOnceOnTimeout` is NOT a
+    // "no listing found" — it must surface a distinct, retryable
+    // `status` so a caller never reads it as a genuine miss.
+    let n = 0;
+    mockFetchHtml.mockImplementation(async () => {
+      n++;
+      // Target 2 times out on BOTH the initial call and the one-shot
+      // retry, so `retryOnceOnTimeout` gives up and the row catch runs.
+      if (n === 2 || n === 3) {
+        throw new FetchproxyTimeoutError({
+          url: '/h/b_lid/',
+          timeoutMs: 30_000,
+        });
+      }
+      return homedetailsHtml({
+        listingIdSHA: `id-${n}`,
+        pageLink: `/h/${n}/`,
+        price: { lastKnown: 500_000 },
+      });
+    });
+    const r = await harness.callTool('compass_bulk_get', {
+      targets: [
+        { url: '/homedetails/foo/a_lid/' },
+        { url: '/homedetails/foo/b_lid/' },
+      ],
+    });
+    const parsed = parseToolResult<{
+      rows: Array<{
+        property?: { price?: number };
+        error?: string;
+        status?: string;
+        retryable?: boolean;
+      }>;
+    }>(r);
+    expect(parsed.rows[0].property?.price).toBe(500_000);
+    expect(parsed.rows[1].status).toBe('timeout');
+    expect(parsed.rows[1].retryable).toBe(true);
+    expect(parsed.rows[1].error).toMatch(/timeout after retry/);
+    expect(parsed.rows[1].property).toBeUndefined();
+  });
+
+  it('marks a per-row bridge-down as a retryable transport fault', async () => {
+    mockFetchHtml.mockImplementation(async () => {
+      throw new FetchproxyBridgeDownError({
+        originalError: 'service worker offline',
+        op: 'fetch',
+        url: '/h/a_lid/',
+      });
+    });
+    const r = await harness.callTool('compass_bulk_get', {
+      targets: [{ url: '/homedetails/foo/a_lid/' }],
+    });
+    const parsed = parseToolResult<{
+      rows: Array<{
+        error?: string;
+        status?: string;
+        retryable?: boolean;
+      }>;
+    }>(r);
+    expect(parsed.rows[0].status).toBe('bridge_down');
+    expect(parsed.rows[0].retryable).toBe(true);
+    expect(parsed.rows[0].error).toMatch(/bridge unreachable/);
+  });
+
+  it('keeps a genuine miss (no transport fault) as a plain error, with no status/retryable', async () => {
+    // A protocol error and a plain Error are both "the lookup completed
+    // and there's no listing here / parse failure" — they MUST stay
+    // un-flagged so a caller treats them as real misses, not retries.
+    let n = 0;
+    mockFetchHtml.mockImplementation(async () => {
+      n++;
+      if (n === 1) throw new FetchproxyProtocolError('no signed-in tab');
+      throw new Error('__INITIAL_DATA__.props.listingRelation.listing missing');
+    });
+    const r = await harness.callTool('compass_bulk_get', {
+      targets: [
+        { url: '/homedetails/foo/a_lid/' },
+        { url: '/homedetails/foo/b_lid/' },
+      ],
+    });
+    const parsed = parseToolResult<{
+      rows: Array<{
+        error?: string;
+        status?: string;
+        retryable?: boolean;
+      }>;
+    }>(r);
+    // protocol → bare message, no status/retryable
+    expect(parsed.rows[0].error).toBe('no signed-in tab');
+    expect(parsed.rows[0].status).toBeUndefined();
+    expect(parsed.rows[0].retryable).toBeUndefined();
+    // genuine miss (plain Error) → message preserved, no status/retryable
+    expect(parsed.rows[1].error).toMatch(/listing missing/);
+    expect(parsed.rows[1].status).toBeUndefined();
+    expect(parsed.rows[1].retryable).toBeUndefined();
   });
 
   it('caps in-flight fetches at BRIDGE_CONCURRENCY (=6)', async () => {
