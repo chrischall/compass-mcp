@@ -91,6 +91,11 @@ describe('normalizeEventType', () => {
     // it to Delisted.
     ['Cancelled', 'Withdrawn'],
     ['Listing Cancelled', 'Withdrawn'],
+    // `completed` -> Sold (realty-core 0.4.0). This RESTORES the mapping
+    // compass had inline before the canonical swap (its old inline mapped
+    // `completed` -> Sold); canonical 0.3.x lacked it, 0.4.0 brings it back.
+    ['Completed', 'Sold'],
+    ['Sale Completed', 'Sold'],
   ])('delta: maps "%s" -> %s', (input, expected) => {
     expect(normalizeEventType(input)).toBe(expected);
   });
