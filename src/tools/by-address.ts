@@ -4,6 +4,10 @@ import {
   FetchproxyBridgeDownError,
   FetchproxyTimeoutError,
 } from '@fetchproxy/server';
+import {
+  normalizeAddressForCompare,
+  SUFFIX_PAIRS,
+} from '@chrischall/realty-core';
 import type { CompassClient } from '../client.js';
 import { textResult } from '../mcp.js';
 import { extractUc } from '../page-state.js';
@@ -106,41 +110,38 @@ function formatAddressLine(input: ByAddressInput): string {
 }
 
 /**
- * Common US street-type abbreviations, longest-form first so a "Lane"
- * rule doesn't trip on a shorter regex.
+ * Per-token street-suffix fold, derived from realty-core's canonical
+ * `SUFFIX_PAIRS` (the source of `expandSuffix`). Maps every recognised
+ * full-form suffix to its abbreviation so "Lane"/"Ln", "Street"/"St"
+ * etc. canonicalize to a single token. Both directions are keyed under
+ * their lowercase form so a token already in either form resolves.
+ *
+ * We can't use `expandSuffix` directly here: it only swaps the TRAILING
+ * suffix of a street line, but the verifier compares whole tokens of a
+ * candidate address whose suffix sits MID-string (before the city), so
+ * the fold has to apply per-token regardless of position.
  */
-const STREET_TYPE_CANON: Array<[RegExp, string]> = [
-  [/\bboulevard\b/g, 'blvd'],
-  [/\bstreet\b/g, 'st'],
-  [/\bavenue\b/g, 'ave'],
-  [/\bdrive\b/g, 'dr'],
-  [/\broad\b/g, 'rd'],
-  [/\bcourt\b/g, 'ct'],
-  [/\bplace\b/g, 'pl'],
-  [/\blane\b/g, 'ln'],
-  [/\bcircle\b/g, 'cir'],
-  [/\bterrace\b/g, 'ter'],
-  [/\bhighway\b/g, 'hwy'],
-  [/\bparkway\b/g, 'pkwy'],
-  [/\bsuite\b/g, 'ste'],
-];
+const SUFFIX_FOLD: ReadonlyMap<string, string> = new Map(
+  SUFFIX_PAIRS.flatMap(([abbr, full]) => [
+    [abbr.toLowerCase(), abbr.toLowerCase()] as [string, string],
+    [full.toLowerCase(), abbr.toLowerCase()] as [string, string],
+  ])
+);
 
 /**
- * Normalize an address for substring comparison: lowercase, strip
- * punctuation, collapse whitespace, fold common street-type aliases.
- * Exported for direct unit-testing.
+ * Normalize an address for whole-token comparison: lowercase, strip
+ * punctuation, collapse whitespace (delegated to realty-core's
+ * `normalizeAddressForCompare`), then fold each street-type token to its
+ * canonical abbreviation via the cohort `SUFFIX_PAIRS`. Exported for
+ * direct unit-testing.
  */
 export function normalizeAddressForMatch(s: string | undefined): string {
-  if (!s) return '';
-  let out = s
-    .toLowerCase()
-    .normalize('NFKD')
-    .replace(/[̀-ͯ]/g, '')
-    .replace(/[.,#\/\\]/g, ' ')
-    .replace(/\s+/g, ' ')
-    .trim();
-  for (const [re, repl] of STREET_TYPE_CANON) out = out.replace(re, repl);
-  return out.replace(/\s+/g, ' ').trim();
+  const base = normalizeAddressForCompare(s);
+  if (!base) return '';
+  return base
+    .split(' ')
+    .map((tok) => SUFFIX_FOLD.get(tok) ?? tok)
+    .join(' ');
 }
 
 /**
