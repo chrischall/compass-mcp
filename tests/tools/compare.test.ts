@@ -1,4 +1,9 @@
 import { describe, it, expect, vi, beforeEach, afterAll } from 'vitest';
+import {
+  FetchproxyTimeoutError,
+  FetchproxyBridgeDownError,
+  FetchproxyProtocolError,
+} from '@fetchproxy/server';
 import type { CompassClient } from '../../src/client.js';
 import { buildSummary, registerCompareTools } from '../../src/tools/compare.js';
 import { createTestHarness, parseToolResult } from '../helpers.js';
@@ -262,5 +267,94 @@ describe('compass_compare_properties tool', () => {
     expect(parsed.results[0].property?.price).toBe(500_000);
     expect(parsed.results[1].error).toMatch(/boom/);
     expect(parsed.results[2].property?.price).toBe(500_000);
+  });
+
+  // Error-contract parity with `compass_bulk_get` / `compass_resolve_addresses`
+  // (#73/#85). A post-`retryOnceOnTimeout` timeout / bridge-down is a
+  // transport fault, NOT a genuine miss — it must surface a distinct,
+  // retryable `status` via `classifyRowError`, the same way the other two
+  // fan-out tools do.
+  it('marks a per-row bridge timeout (after retry) as a retryable transport fault, not a miss', async () => {
+    let n = 0;
+    mockFetchHtml.mockImplementation(async () => {
+      n++;
+      // Target 2 times out on BOTH the initial call and the one-shot
+      // retry, so `retryOnceOnTimeout` gives up and the row catch runs.
+      if (n === 2 || n === 3) {
+        throw new FetchproxyTimeoutError({ url: '/h/b_lid/', timeoutMs: 30_000 });
+      }
+      return htmlWith({
+        listingIdSHA: `id-${n}`,
+        pageLink: `/h/${n}/`,
+        price: { lastKnown: 500_000 },
+      });
+    });
+    const r = await harness.callTool('compass_compare_properties', {
+      targets: [
+        { url: '/homedetails/foo/a_lid/' },
+        { url: '/homedetails/foo/b_lid/' },
+      ],
+    });
+    const parsed = parseToolResult<{
+      results: Array<{
+        property?: { price?: number };
+        error?: string;
+        status?: string;
+        retryable?: boolean;
+      }>;
+    }>(r);
+    expect(parsed.results[0].property?.price).toBe(500_000);
+    expect(parsed.results[1].status).toBe('timeout');
+    expect(parsed.results[1].retryable).toBe(true);
+    expect(parsed.results[1].error).toMatch(/timeout after retry/);
+    expect(parsed.results[1].property).toBeUndefined();
+  });
+
+  it('marks a per-row bridge-down as a retryable transport fault', async () => {
+    mockFetchHtml.mockImplementation(async () => {
+      throw new FetchproxyBridgeDownError({
+        originalError: 'service worker offline',
+        op: 'fetch',
+        url: '/h/a_lid/',
+      });
+    });
+    const r = await harness.callTool('compass_compare_properties', {
+      targets: [
+        { url: '/homedetails/foo/a_lid/' },
+        { url: '/homedetails/foo/b_lid/' },
+      ],
+    });
+    const parsed = parseToolResult<{
+      results: Array<{ error?: string; status?: string; retryable?: boolean }>;
+    }>(r);
+    expect(parsed.results[0].status).toBe('bridge_down');
+    expect(parsed.results[0].retryable).toBe(true);
+    expect(parsed.results[0].error).toMatch(/bridge unreachable/);
+  });
+
+  it('keeps a genuine miss (no transport fault) as a plain error, with no status/retryable', async () => {
+    let n = 0;
+    mockFetchHtml.mockImplementation(async () => {
+      n++;
+      if (n === 1) throw new FetchproxyProtocolError('no signed-in tab');
+      throw new Error('__INITIAL_DATA__.props.listingRelation.listing missing');
+    });
+    const r = await harness.callTool('compass_compare_properties', {
+      targets: [
+        { url: '/homedetails/foo/a_lid/' },
+        { url: '/homedetails/foo/b_lid/' },
+      ],
+    });
+    const parsed = parseToolResult<{
+      results: Array<{ error?: string; status?: string; retryable?: boolean }>;
+    }>(r);
+    // protocol → bare message, no status/retryable
+    expect(parsed.results[0].error).toBe('no signed-in tab');
+    expect(parsed.results[0].status).toBeUndefined();
+    expect(parsed.results[0].retryable).toBeUndefined();
+    // genuine miss (plain Error) → message preserved, no status/retryable
+    expect(parsed.results[1].error).toMatch(/listing missing/);
+    expect(parsed.results[1].status).toBeUndefined();
+    expect(parsed.results[1].retryable).toBeUndefined();
   });
 });
