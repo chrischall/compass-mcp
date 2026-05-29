@@ -284,9 +284,43 @@ describe('format', () => {
     expect(out.lot_size_acres).not.toBe(0);
   });
 
-  it('synthesizes a URL when pageLink is missing', () => {
-    const out = format({ listingIdSHA: 'abc' });
-    expect(out.url).toBe('https://www.compass.com/homedetails/abc_lid/');
+  describe('url preference order (#15)', () => {
+    // Compass exposes several link fields on a listing. `url` should pick
+    // the most-resolvable form: the slugged `pageLink` first, then the
+    // stable `_pid/` `navigationPageLink`, and only as a genuine last
+    // resort the slug-less `/homedetails/<sha>_lid/` form — which 410s on
+    // compass.com but is the only thing derivable from a bare sha.
+
+    it('prefers the slugged pageLink (_lid/) when present', () => {
+      const out = format({
+        listingIdSHA: 'abc',
+        pageLink: '/homedetails/foo/abc_lid/',
+        navigationPageLink: '/homedetails/foo/203T5X_pid/',
+      });
+      expect(out.url).toBe(
+        'https://www.compass.com/homedetails/foo/abc_lid/'
+      );
+    });
+
+    it('falls back to the resolvable _pid/ navigationPageLink when pageLink is absent', () => {
+      // navigationPageLink is a working URL (it backs `property_url`),
+      // so it must be preferred over the 410-ing slug-less _lid/ form.
+      const out = format({
+        listingIdSHA: 'abc',
+        navigationPageLink: '/homedetails/foo/203T5X_pid/',
+      });
+      expect(out.url).toBe(
+        'https://www.compass.com/homedetails/foo/203T5X_pid/'
+      );
+    });
+
+    it('uses the slug-less _lid/ form only as a last resort (no pageLink, no navigationPageLink)', () => {
+      // Benign last resort: this slug-less form 410s on compass.com, but
+      // a bare sha can't be turned into a slugged URL without an extra
+      // search lookup — so this is the only thing format() can synthesize.
+      const out = format({ listingIdSHA: 'abc' });
+      expect(out.url).toBe('https://www.compass.com/homedetails/abc_lid/');
+    });
   });
 
   it('surfaces pid alongside listing_id_sha when navigationPageLink is a _pid/ form', () => {

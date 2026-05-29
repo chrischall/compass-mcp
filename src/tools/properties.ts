@@ -552,11 +552,23 @@ export function format(
   const price = listing.price ?? {};
   const dInfo = listing.detailedInfo ?? {};
   const dates = listing.date ?? {};
-  const url = listing.pageLink
-    ? listing.pageLink.startsWith('http')
+  // `url` preference order (issue #15): slugged `pageLink` (the canonical
+  // `_lid/` form) → the resolvable `_pid/` `navigationPageLink` → and only
+  // as a genuine last resort the slug-less `/homedetails/<sha>_lid/` form.
+  // That last form 410s on compass.com, but a listing record that arrives
+  // with neither `pageLink` nor `navigationPageLink` leaves nothing else
+  // derivable without an extra search lookup — so it's a benign fallback,
+  // not a fabricated scheme. Mirrors `buildListingUrl` in by-address.ts.
+  let url: string;
+  if (listing.pageLink) {
+    url = listing.pageLink.startsWith('http')
       ? listing.pageLink
-      : `https://www.compass.com${listing.pageLink}`
-    : `https://www.compass.com/homedetails/${listing.listingIdSHA ?? ''}_lid/`;
+      : `https://www.compass.com${listing.pageLink}`;
+  } else if (listing.navigationPageLink) {
+    url = `https://www.compass.com${listing.navigationPageLink}`;
+  } else {
+    url = `https://www.compass.com/homedetails/${listing.listingIdSHA ?? ''}_lid/`;
+  }
   const propertyUrl = listing.navigationPageLink
     ? `https://www.compass.com${listing.navigationPageLink}`
     : undefined;
