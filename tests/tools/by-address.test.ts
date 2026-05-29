@@ -830,30 +830,30 @@ describe('compass_get_by_address tool', () => {
       expect(parsed.url).toBeUndefined();
     });
 
-    it('page-walks slug results when first page has no match but second does', async () => {
+    it('matches within the single reachable slug page (#87: /page-N/ is dead)', async () => {
+      // Issue #87: Compass's `/page-N/` SSR path canonicalizes back to
+      // page 1 and returns identical data, so the slug rung fetches page
+      // 1 only — its ~41 listings are the entire reachable set. A match
+      // anywhere in that page resolves; no /page-N/ walk.
       mockFetchHtml.mockResolvedValueOnce(searchHtml([])); // ?q= empty
-      // Page 1: 5 entries, none match (full page → keep walking).
-      const page1Entries = Array.from({ length: 5 }, (_, i) => ({
-        listing: {
-          listingIdSHA: `sha-p1-${i}`,
-          pageLink: `/homedetails/p1-${i}/sha-p1-${i}_lid/`,
-          subtitles: [`${i + 1} Other St`, 'Lake Lure, NC'],
-        },
-      }));
-      mockFetchHtml.mockResolvedValueOnce(searchHtml(page1Entries));
-      // Page 2: includes the match.
-      mockFetchHtml.mockResolvedValueOnce(
-        searchHtml([
-          {
-            listing: {
-              listingIdSHA: 'sha-p2-hit',
-              pageLink: '/homedetails/126-sleeping-bear-ln/sha-p2-hit_lid/',
-              navigationPageLink: '/listing/126-sleeping-bear-ln/P2HIT_pid/',
-              subtitles: ['126 Sleeping Bear Ln', 'Lake Lure, NC 28746'],
-            },
+      const page1Entries = [
+        ...Array.from({ length: 5 }, (_, i) => ({
+          listing: {
+            listingIdSHA: `sha-p1-${i}`,
+            pageLink: `/homedetails/p1-${i}/sha-p1-${i}_lid/`,
+            subtitles: [`${i + 1} Other St`, 'Lake Lure, NC'],
           },
-        ])
-      );
+        })),
+        {
+          listing: {
+            listingIdSHA: 'sha-hit',
+            pageLink: '/homedetails/126-sleeping-bear-ln/sha-hit_lid/',
+            navigationPageLink: '/listing/126-sleeping-bear-ln/HITPID_pid/',
+            subtitles: ['126 Sleeping Bear Ln', 'Lake Lure, NC 28746'],
+          },
+        },
+      ];
+      mockFetchHtml.mockResolvedValueOnce(searchHtml(page1Entries));
       const r = await harness.callTool('compass_get_by_address', {
         address: '126 Sleeping Bear Ln',
         city: 'Lake Lure',
@@ -867,27 +867,27 @@ describe('compass_get_by_address tool', () => {
       }>(r);
       expect(parsed.resolved).toBe(true);
       expect(parsed.matched_via).toBe('search_fallback');
-      expect(parsed.listing_id_sha).toBe('sha-p2-hit');
-      // ?q= + page 1 + page 2 = 3 fetches.
-      expect(mockFetchHtml).toHaveBeenCalledTimes(3);
-      // Page 2 must use Compass's /page-2/ canonical path segment.
-      const page2Path = mockFetchHtml.mock.calls[2][0] as string;
-      expect(page2Path).toContain('/page-2/');
+      expect(parsed.listing_id_sha).toBe('sha-hit');
+      // ?q= + a single slug page = 2 fetches; NO /page-N/ walk.
+      expect(mockFetchHtml).toHaveBeenCalledTimes(2);
+      const slugPath = mockFetchHtml.mock.calls[1][0] as string;
+      expect(slugPath).not.toContain('/page-');
     });
 
-    it('stops slug page-walk when a short page signals exhaustion', async () => {
+    it('does not page-walk: a miss on the single slug page is final (#87)', async () => {
       mockFetchHtml.mockResolvedValueOnce(searchHtml([])); // ?q= empty
-      // Short page (<COMPASS_PAGE_SIZE) → exhausted, no further fetch.
+      // The single reachable slug page has no match → resolved:false,
+      // no /page-2/ fetch (it would just re-return this same page).
       mockFetchHtml.mockResolvedValueOnce(
-        searchHtml([
-          {
+        searchHtml(
+          Array.from({ length: 41 }, (_, i) => ({
             listing: {
-              listingIdSHA: 'sha-other',
-              pageLink: '/homedetails/x/sha-other_lid/',
-              subtitles: ['999 Other St', 'Lake Lure, NC'],
+              listingIdSHA: `sha-other-${i}`,
+              pageLink: `/homedetails/x-${i}/sha-other-${i}_lid/`,
+              subtitles: [`${i + 1} Other St`, 'Lake Lure, NC'],
             },
-          },
-        ])
+          }))
+        )
       );
       const r = await harness.callTool('compass_get_by_address', {
         address: '126 Sleeping Bear Ln',
@@ -897,7 +897,7 @@ describe('compass_get_by_address tool', () => {
       });
       const parsed = parseToolResult<{ resolved: boolean }>(r);
       expect(parsed.resolved).toBe(false);
-      // Only 2 fetches: ?q= + one slug page; no /page-2/ because short.
+      // Only 2 fetches: ?q= + one slug page; never a /page-2/.
       expect(mockFetchHtml).toHaveBeenCalledTimes(2);
     });
   });

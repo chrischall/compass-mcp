@@ -262,78 +262,119 @@ describe('compass_search_properties tool', () => {
     expect(parsed.results).toHaveLength(3);
   });
 
-  it('fetches additional Compass pages when limit exceeds one page', async () => {
-    // Compass server-renders 5 listings per page; honoring a larger
-    // limit means fetching /page-2/, /page-3/, etc. and concatenating.
-    const page = (start: number, count: number, total: number) => {
-      const listings = Array.from({ length: count }, (_, i) => ({
-        listing: { listingIdSHA: String(start + i), pageLink: `/h/${start + i}/` },
-      }));
-      const uc = {
-        sharedReactAppProps: {
-          initialResults: {
-            lolResults: { totalItems: total, data: listings },
-          },
-        },
-      };
-      return `<html><script>global.uc = ${JSON.stringify(uc)};</script></html>`;
-    };
-    mockFetchHtml
-      .mockResolvedValueOnce(page(1, 5, 11)) // page 1
-      .mockResolvedValueOnce(page(6, 5, 11)) // page 2
-      .mockResolvedValueOnce(page(11, 1, 11)); // page 3 (partial)
+  // Issue #87 (P1-3): Compass no longer paginates the SSR search via any
+  // URL — `/page-N/`, `?page=N`, `?start=N` all canonicalize to page 1
+  // and return identical listings (verified live). Only the first SSR
+  // page (~COMPASS_PAGE_SIZE=41) is reachable. The tool must fetch ONLY
+  // that page, never emit a /page-N/ URL, and never advertise a cursor
+  // it can't honor.
+  const ucHtml = (data: unknown[], total?: number) => {
+    const lolResults: Record<string, unknown> = { data };
+    if (total !== undefined) lolResults.totalItems = total;
+    const uc = { sharedReactAppProps: { initialResults: { lolResults } } };
+    return `<html><script>global.uc = ${JSON.stringify(uc)};</script></html>`;
+  };
+  const mkListings = (start: number, count: number) =>
+    Array.from({ length: count }, (_, i) => ({
+      listing: { listingIdSHA: String(start + i), pageLink: `/h/${start + i}/` },
+    }));
 
+  it('#87: fetches ONLY page 1 (never a /page-N/ URL) even with a large limit', async () => {
+    // The single reachable SSR page carries up to COMPASS_PAGE_SIZE (~41)
+    // listings; a larger limit cannot fan out to /page-2/ because that
+    // URL just re-returns page 1.
+    mockFetchHtml.mockResolvedValueOnce(ucHtml(mkListings(1, 41), 104));
     const r = await harness.callTool('compass_search_properties', {
       location: 'Mill Spring NC',
       price_min: 400000,
       price_max: 600000,
-      limit: 11,
+      limit: 1000,
     });
     expect(r.isError).toBeFalsy();
+    // Exactly one fetch, to the bare filtered path — no /page-N/.
     expect(mockFetchHtml.mock.calls.map((c) => c[0])).toEqual([
       '/homes-for-sale/mill-spring-nc/400000-600000-price/',
-      '/homes-for-sale/mill-spring-nc/400000-600000-price/page-2/',
-      '/homes-for-sale/mill-spring-nc/400000-600000-price/page-3/',
     ]);
     const parsed = parseToolResult<{
       count: number;
       total_items: number;
-      results: Array<{ listing_id_sha: string }>;
       next_offset?: number;
     }>(r);
-    expect(parsed.count).toBe(11);
-    expect(parsed.total_items).toBe(11);
-    expect(parsed.results.map((x) => x.listing_id_sha)).toEqual([
-      '1', '2', '3', '4', '5', '6', '7', '8', '9', '10', '11',
-    ]);
-    // All exhausted: no continuation cursor.
+    expect(parsed.count).toBe(41);
+    expect(parsed.total_items).toBe(104);
+    // The whole reachable page was returned — no false cursor past it,
+    // even though total_items (104) is far larger.
     expect(parsed.next_offset).toBeUndefined();
   });
 
-  it('honors offset by skipping to the right Compass page', async () => {
-    // offset=5 → start at page 2's first result. With limit=3 we get
-    // listings 6,7,8 and a next_offset=8 for further paging.
-    const uc = (data: unknown[], total: number) => ({
-      sharedReactAppProps: {
-        initialResults: { lolResults: { totalItems: total, data } },
-      },
+  it('#87 REGRESSION: a default limit-40 call does NOT advertise a re-fetch cursor', async () => {
+    // The reported defect: total_items=104, next_offset=40, then
+    // offset:40 -> page-9 -> identical first 40. With the honest model,
+    // a 41-listing page truncated to limit 40 leaves 1 within the page,
+    // so next_offset=40 IS legitimate here (more remains WITHIN page 1).
+    mockFetchHtml.mockResolvedValueOnce(ucHtml(mkListings(1, 41), 104));
+    const r = await harness.callTool('compass_search_properties', {
+      location: 'x',
     });
-    const html = (data: unknown[], total: number) =>
-      `<html><script>global.uc = ${JSON.stringify(uc(data, total))};</script></html>`;
-    const mk = (start: number, count: number) =>
-      Array.from({ length: count }, (_, i) => ({
-        listing: { listingIdSHA: String(start + i), pageLink: `/h/${start + i}/` },
-      }));
-    mockFetchHtml.mockResolvedValueOnce(html(mk(6, 5), 11)); // page 2
+    const parsed = parseToolResult<{
+      count: number;
+      next_offset?: number;
+    }>(r);
+    expect(parsed.count).toBe(40);
+    // One listing remains within the reachable page → honest cursor.
+    expect(parsed.next_offset).toBe(40);
+  });
 
+  it('#87 REGRESSION: offset:40 honors the intra-page position, not a bogus page-9 fetch', async () => {
+    // The old code mapped offset 40 -> Math.floor(40/5)+1 = page-9 and
+    // re-returned page 1. Now offset 40 just slices into the single
+    // reachable page (which holds 41), returning the 41st listing.
+    mockFetchHtml.mockResolvedValueOnce(ucHtml(mkListings(1, 41), 104));
+    const r = await harness.callTool('compass_search_properties', {
+      location: 'x',
+      offset: 40,
+    });
+    expect(mockFetchHtml.mock.calls.map((c) => c[0])).toEqual([
+      '/homes-for-sale/x/', // bare page 1 — NOT /page-9/
+    ]);
+    const parsed = parseToolResult<{
+      count: number;
+      offset: number;
+      results: Array<{ listing_id_sha: string }>;
+      next_offset?: number;
+    }>(r);
+    expect(parsed.offset).toBe(40);
+    expect(parsed.count).toBe(1);
+    expect(parsed.results.map((x) => x.listing_id_sha)).toEqual(['41']);
+    // Page exhausted — no cursor past the reachable page.
+    expect(parsed.next_offset).toBeUndefined();
+  });
+
+  it('#87: an offset at or beyond the reachable page returns nothing (can not reach page 2)', async () => {
+    mockFetchHtml.mockResolvedValueOnce(ucHtml(mkListings(1, 41), 104));
+    const r = await harness.callTool('compass_search_properties', {
+      location: 'x',
+      offset: 41,
+    });
+    expect(mockFetchHtml.mock.calls.map((c) => c[0])).toEqual([
+      '/homes-for-sale/x/',
+    ]);
+    const parsed = parseToolResult<{ count: number; next_offset?: number }>(r);
+    expect(parsed.count).toBe(0);
+    expect(parsed.next_offset).toBeUndefined();
+  });
+
+  it('honors intra-page offset and emits an honest next_offset within the page', async () => {
+    // offset 5, limit 3 over a 41-listing page → returns 6,7,8 and a
+    // next_offset of 8 (more remains within the page).
+    mockFetchHtml.mockResolvedValueOnce(ucHtml(mkListings(1, 41), 104));
     const r = await harness.callTool('compass_search_properties', {
       location: 'x',
       offset: 5,
       limit: 3,
     });
-    expect(r.isError).toBeFalsy();
     expect(mockFetchHtml.mock.calls.map((c) => c[0])).toEqual([
-      '/homes-for-sale/x/page-2/',
+      '/homes-for-sale/x/',
     ]);
     const parsed = parseToolResult<{
       count: number;
@@ -345,52 +386,24 @@ describe('compass_search_properties tool', () => {
     expect(parsed.next_offset).toBe(8);
   });
 
-  it('surfaces next_offset when more results are available than were returned', async () => {
-    // With totalItems=11 and we only got 5, the caller can request more.
-    // (htmlWith sets totalItems = listings.length, so this test crafts
-    // its own.)
-    const uc = {
-      sharedReactAppProps: {
-        initialResults: {
-          lolResults: {
-            totalItems: 11,
-            data: Array.from({ length: 5 }, (_, i) => ({
-              listing: { listingIdSHA: String(i + 1), pageLink: `/h/${i}/` },
-            })),
-          },
-        },
-      },
-    };
-    mockFetchHtml.mockResolvedValueOnce(
-      `<html><script>global.uc = ${JSON.stringify(uc)};</script></html>`
-    );
+  it('omits next_offset when the whole reachable page fits under the limit', async () => {
+    mockFetchHtml.mockResolvedValueOnce(ucHtml(mkListings(1, 3), 3));
     const r = await harness.callTool('compass_search_properties', {
       location: 'x',
-      limit: 5,
+      limit: 40,
     });
-    const parsed = parseToolResult<{ next_offset?: number }>(r);
-    expect(parsed.next_offset).toBe(5);
+    const parsed = parseToolResult<{
+      count: number;
+      total_items?: number;
+      next_offset?: number;
+    }>(r);
+    expect(parsed.count).toBe(3);
+    expect(parsed.total_items).toBe(3);
+    expect(parsed.next_offset).toBeUndefined();
   });
 
-  it('omits next_offset on a partial last page when totalItems is absent', async () => {
-    // Without totalItems, a short page already signals exhaustion — the
-    // fallback `collected.length >= limit` heuristic must not emit a
-    // misleading `next_offset` in this case.
-    const uc = {
-      sharedReactAppProps: {
-        initialResults: {
-          lolResults: {
-            // totalItems intentionally absent
-            data: Array.from({ length: 3 }, (_, i) => ({
-              listing: { listingIdSHA: String(i + 1), pageLink: `/h/${i}/` },
-            })),
-          },
-        },
-      },
-    };
-    mockFetchHtml.mockResolvedValueOnce(
-      `<html><script>global.uc = ${JSON.stringify(uc)};</script></html>`
-    );
+  it('omits next_offset on a short page when totalItems is absent', async () => {
+    mockFetchHtml.mockResolvedValueOnce(ucHtml(mkListings(1, 3))); // no totalItems
     const r = await harness.callTool('compass_search_properties', {
       location: 'x',
       limit: 3,
@@ -406,90 +419,26 @@ describe('compass_search_properties tool', () => {
     expect(parsed.next_offset).toBeUndefined();
   });
 
-  it('keeps paging when a full raw page has some entries filtered out by formatHome', async () => {
-    // Compass occasionally returns cluster entries / "coming soon" stubs
-    // that have no `listingIdSHA`; `formatHome` drops them. The
-    // exhaustion guard must look at the *raw* page size, not the
-    // filtered one — otherwise a partial-after-filter page on a full
-    // raw page would short-circuit and under-deliver results.
-    const page = (start: number, validCount: number, stubCount: number, total: number) => {
-      const valid = Array.from({ length: validCount }, (_, i) => ({
-        listing: { listingIdSHA: String(start + i), pageLink: `/h/${start + i}/` },
-      }));
-      const stubs = Array.from({ length: stubCount }, () => ({
-        listing: {}, // no listingIdSHA → filtered out by formatHome
-      }));
-      const uc = {
-        sharedReactAppProps: {
-          initialResults: {
-            lolResults: { totalItems: total, data: [...valid, ...stubs] },
-          },
-        },
-      };
-      return `<html><script>global.uc = ${JSON.stringify(uc)};</script></html>`;
-    };
-    // Page 1: 5 raw entries (4 valid + 1 stub). raw.length === PAGE_SIZE
-    // so we should NOT short-circuit — fetch page 2 too.
-    mockFetchHtml
-      .mockResolvedValueOnce(page(1, 4, 1, 10))
-      .mockResolvedValueOnce(page(5, 5, 0, 10));
-
+  it('filters formatHome stubs without affecting the single-page model', async () => {
+    // Cluster / "coming soon" entries without a listingIdSHA are dropped
+    // by formatHome; the count reflects only the valid listings.
+    const valid = mkListings(1, 4);
+    const stubs = Array.from({ length: 2 }, () => ({ listing: {} }));
+    mockFetchHtml.mockResolvedValueOnce(ucHtml([...valid, ...stubs], 6));
     const r = await harness.callTool('compass_search_properties', {
       location: 'x',
-      limit: 9,
+      limit: 40,
     });
-    expect(r.isError).toBeFalsy();
-    expect(mockFetchHtml.mock.calls.map((c) => c[0])).toEqual([
-      '/homes-for-sale/x/',
-      '/homes-for-sale/x/page-2/',
-    ]);
     const parsed = parseToolResult<{
       count: number;
       results: Array<{ listing_id_sha: string }>;
-    }>(r);
-    expect(parsed.count).toBe(9);
-    expect(parsed.results.map((x) => x.listing_id_sha)).toEqual([
-      '1', '2', '3', '4', '5', '6', '7', '8', '9',
-    ]);
-  });
-
-  it('honors the MAX_PAGES safety cap and exposes next_offset (#47)', async () => {
-    // Fill every page Compass returns so the loop is bound by MAX_PAGES,
-    // not by exhaustion or by `limit`. Asserts the documented cap.
-    let counter = 0;
-    mockFetchHtml.mockImplementation(async () => {
-      // Emit a high totalItems so the loop doesn't bail on exhaustion
-      // before MAX_PAGES; emit COMPASS_PAGE_SIZE entries per page with
-      // unique shas so dedup / short-page detection don't short-circuit.
-      const listings = Array.from({ length: 5 }, () => ({
-        listing: {
-          listingIdSHA: `id-${counter++}`,
-          pageLink: `/h/${counter}/`,
-        },
-      }));
-      const uc = {
-        sharedReactAppProps: {
-          initialResults: {
-            lolResults: { totalItems: 10_000, data: listings },
-          },
-        },
-      };
-      return `<html><script>global.uc = ${JSON.stringify(uc)};</script></html>`;
-    });
-    const r = await harness.callTool('compass_search_properties', {
-      location: 'big-market',
-      limit: 10_000, // huge — forces the cap to bind
-    });
-    const parsed = parseToolResult<{
-      count: number;
-      offset: number;
       next_offset?: number;
     }>(r);
-    // 50 pages * 5 per page = 250 — the documented upper bound.
-    expect(parsed.count).toBe(250);
-    expect(mockFetchHtml.mock.calls.length).toBe(50);
-    // next_offset is present because the last synthesized page was full.
-    expect(parsed.next_offset).toBe(250);
+    expect(parsed.count).toBe(4);
+    expect(parsed.results.map((x) => x.listing_id_sha)).toEqual([
+      '1', '2', '3', '4',
+    ]);
+    expect(parsed.next_offset).toBeUndefined();
   });
 
   it('throws when uc can not be extracted from the HTML', async () => {

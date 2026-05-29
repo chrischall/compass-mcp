@@ -8,7 +8,7 @@ import type { CompassClient } from '../client.js';
 import { textResult } from '../mcp.js';
 import { extractUc } from '../page-state.js';
 import { extractPidFromUrl, locationToSlug } from '../url.js';
-import { COMPASS_PAGE_SIZE, findLolResults } from './search.js';
+import { findLolResults } from './search.js';
 import {
   OMNISUGGEST_AUTOCOMPLETE_PATH,
   buildAutocompleteBody,
@@ -39,8 +39,8 @@ import {
  *      lift its `listingIdSHA` + `pageLink` + `navigationPageLink`
  *      and tag `matched_via: "freetext"`. WAF-blocked today; kept as
  *      fallback in case it recovers.
- *   2. search_fallback — `/homes-for-sale/<locality-slug>/` SSR, page-
- *      walked up to `BY_ADDRESS_FALLBACK_MAX_PAGES`. Same address
+ *   2. search_fallback — `/homes-for-sale/<locality-slug>/` SSR (first
+ *      page only — `/page-N/` is dead, issue #87). Same address
  *      verifier. Fires only when the caller supplied enough locality
  *      (city/state, ZIP, etc.) to anchor on. Tag `matched_via:
  *      "search_fallback"`. Round-3 zillow corpus showed this rung
@@ -217,15 +217,6 @@ interface ByAddressUnresolved {
 
 type ByAddressResult = ByAddressResolved | ByAddressUnresolved;
 
-/**
- * Bound on slug-rung page-walk per call. Compass returns
- * COMPASS_PAGE_SIZE listings per SSR page; this cap keeps a worst-case
- * fallback from fanning out indefinitely on dense markets. Mirrors the
- * compass_search_properties `MAX_PAGES` cap (#47) at a tighter ceiling
- * because the by-address path is interactive.
- */
-export const BY_ADDRESS_FALLBACK_MAX_PAGES = 5;
-
 interface RawListingLike {
   listingIdSHA?: string;
   pageLink?: string;
@@ -395,8 +386,9 @@ async function fetchTypeaheadCandidates(
  *   0. typeahead — POST `/api/v3/omnisuggest/autocomplete` (structured
  *      address) with `addressMatchesQuery` verify (#78/#79). PRIMARY.
  *   1. freetext — `/homes-for-sale/?q=<query>` with `addressMatchesQuery` verify
- *   2. search_fallback — `/homes-for-sale/<locality-slug>/` page-walked
- *      with the same verify (#71)
+ *   2. search_fallback — `/homes-for-sale/<locality-slug>/` first page
+ *      with the same verify (#71). `/page-N/` is dead (#87), so this
+ *      rung fetches page 1 only.
  */
 export async function resolveOneAddress(
   client: CompassClient,
@@ -434,25 +426,25 @@ export async function resolveOneAddress(
 
   // Rung 2: slug-based search anchored on locality (#71). This is the
   // first-class, high-recall search rung (#86) — it must run even when
-  // the free-text rung above 403s. Tolerant of per-page content faults
-  // for the same reason; transport faults still propagate (#85).
+  // the free-text rung above 403s. Tolerant of content faults for the
+  // same reason; transport faults still propagate (#85).
+  //
+  // Only the first SSR page is reachable (#87): `/page-N/` canonicalizes
+  // back to page 1 and returns the identical `lolResults`, so walking
+  // `page-2/`, `page-3/`, … just re-checks the same ~COMPASS_PAGE_SIZE
+  // listings. We fetch page 1 once. Its ~41 listings give this rung its
+  // recall; to find an address outside that page the caller must anchor
+  // on a tighter locality (ZIP vs. city).
   const slugBasePath = buildFallbackSlugPath(input);
   if (slugBasePath) {
-    for (let page = 1; page <= BY_ADDRESS_FALLBACK_MAX_PAGES; page += 1) {
-      // page=1 is canonical at the bare path (Compass redirects /page-1/).
-      const path =
-        page === 1 ? slugBasePath : `${slugBasePath}page-${page}/`;
-      const entries = await fetchListingsTolerant(client, path);
-      const matched = findMatchingListing(entries, input);
-      if (matched) {
-        return {
-          resolved: true,
-          listing: matched,
-          matched_via: 'search_fallback',
-        };
-      }
-      // Short page → result set exhausted; stop walking.
-      if (entries.length < COMPASS_PAGE_SIZE) break;
+    const entries = await fetchListingsTolerant(client, slugBasePath);
+    const matched = findMatchingListing(entries, input);
+    if (matched) {
+      return {
+        resolved: true,
+        listing: matched,
+        matched_via: 'search_fallback',
+      };
     }
   }
 
