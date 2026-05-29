@@ -174,22 +174,20 @@ export interface SearchInput {
 }
 
 /**
- * Compass server-renders search results in fixed-size batches in the
- * SSR `lolResults.data[]` array. Subsequent pages are fetched via a
- * `/page-N/` path segment.
+ * Number of listings Compass server-renders into a single SSR
+ * `lolResults.data[]` array — its `rawLolSearchQuery.num`. Verified live
+ * 2026-05-29 against `/homes-for-sale/manhattan-ny/` (num: 41).
  *
- * The page size is a Compass server-side constant; we observe 5 per
- * page on `/homes-for-sale/...` SSR responses. Used to translate an
- * `offset` into a page index for `buildSearchPath`.
+ * This is the ONLY batch reachable through the SSR `fetchHtml` primitive:
+ * the `/page-N/` path segment is dead (issue #87) — `/page-2/` etc.
+ * canonicalize back to page 1 and return the identical data, so there is
+ * no second SSR page to fetch. Used by `by-address.ts`'s slug rung as
+ * the exhaustion threshold for its single reachable page.
+ *
+ * (The historical value was 5, an early under-count; the real page is
+ * ~41, which is why a default limit-40 search fits in one SSR fetch.)
  */
-export const COMPASS_PAGE_SIZE = 5;
-
-/**
- * Hard cap on SSR page fetches per `compass_search_properties` call.
- * Documented in the tool description so callers know the upper bound
- * and can plan pagination. (Issue #47.)
- */
-export const MAX_PAGES = 50;
+export const COMPASS_PAGE_SIZE = 41;
 
 /**
  * Build the `/homes-for-sale/<slug>/<filters>/[page-N/]` path for a
@@ -255,10 +253,12 @@ export function registerSearchTools(
     {
       title: 'Search Compass listings',
       description:
-        "Search Compass listings by location (city, ZIP, neighborhood) and optional filters. Resolves free-text via slugification into Compass's URL routing, then fetches the SSR search-results pages and extracts the embedded listings array. Compass returns " +
-        `${COMPASS_PAGE_SIZE} listings per SSR page; this tool fetches additional pages as needed to satisfy \`limit\`, and accepts \`offset\` for cursor-style continuation. ` +
-        'When more results remain, the response carries `next_offset` — pass it back as `offset` to page forward. ' +
-        `RESULT-CAP HONESTY (issue #47): there is a hard safety cap of ${MAX_PAGES} SSR page fetches per call (≈${MAX_PAGES * COMPASS_PAGE_SIZE} listings). For markets with more results, page through with the \`offset\` cursor, or narrow with \`price_min\` / \`price_max\` / \`beds_min\`/\`beds_max\` to bucket the result set. ` +
+        "Search Compass listings by location (city, ZIP, neighborhood) and optional filters. Resolves free-text via slugification into Compass's URL routing, then fetches the SSR search-results page and extracts the embedded listings array. " +
+        `Compass server-renders ~${COMPASS_PAGE_SIZE} listings into that page (its \`num\`), and \`total_items\` reports the full market count. ` +
+        'PAGINATION (issue #87): Compass no longer paginates the SSR search via any URL — `/page-N/`, `?page=N`, and `?start=N` all canonicalize back to page 1 and return the identical listings, so only the first SSR page (~' +
+        `${COMPASS_PAGE_SIZE} listings) is reachable through this primitive. \`offset\` is honored WITHIN that page, and \`next_offset\` is emitted only when more listings remain within it — it is never a false cursor that re-fetches page 1. ` +
+        'TO REACH BEYOND THE FIRST PAGE, narrow with `price_min` / `price_max` / `beds_min`/`beds_max` to bucket the result set into <~' +
+        `${COMPASS_PAGE_SIZE}-listing bands (price-banding), then search each band. ` +
         "Returns each matching listing's address, price, beds/baths, sqft, primary photo URL, lat/lng, the Compass homedetails URL (`_lid/` form, content-addressed by `listing_id_sha`), and the stable `_pid/` URL via `property_url` and the surfaced `pid` field. " +
         "USE `pid`/`_pid/` FOR LONG-LIVED REFERENCES (trackers, sheets, bookmarks) — sha-based `_lid/` URLs change when a property is delisted and relisted. Use the sha-based URL to fetch the current listing record. Read-only; safe to call repeatedly.",
       annotations: {
@@ -287,7 +287,7 @@ export function registerSearchTools(
           .positive()
           .optional()
           .describe(
-            `Max listings to return (default 40). Compass server-renders ${COMPASS_PAGE_SIZE} listings per page, so honoring a larger limit fans out across multiple page fetches.`
+            `Max listings to return (default 40). Only the first SSR page (~${COMPASS_PAGE_SIZE} listings) is reachable (#87), so a limit above that is capped by the page; use price/beds banding to reach more.`
           ),
         offset: z
           .number()
@@ -295,91 +295,65 @@ export function registerSearchTools(
           .nonnegative()
           .optional()
           .describe(
-            'Zero-based offset into the result set, for cursor-style pagination. Use the `next_offset` value from a previous response to fetch the next page. Default 0.'
+            'Zero-based offset into the reachable first SSR page. Honored only within that page (#87); use the `next_offset` value from a previous response to continue within it. An offset at or beyond the page returns no results — narrow with price/beds bands to reach more. Default 0.'
           ),
       },
     },
     async (input) => {
       const limit = input.limit ?? 40;
       const offset = input.offset ?? 0;
-      const startPage = Math.floor(offset / COMPASS_PAGE_SIZE) + 1;
-      const intraPageSkip = offset % COMPASS_PAGE_SIZE;
 
-      const collected: FormattedHome[] = [];
-      let totalItems: number | undefined;
-      let currentPage = startPage;
-      let pagesFetched = 0;
-      let shortPage = false;
-
-      // Fetch successive Compass pages until we have `limit` formatted
-      // results or the source runs out. Bound the loop by `totalItems`
-      // when present and by MAX_PAGES (module constant) as a safety
-      // net. The cap is documented in the tool description (#47).
-      let pathLog = '';
-      while (collected.length < limit && pagesFetched < MAX_PAGES) {
-        const path = buildSearchPath({ ...input, page: currentPage });
-        if (pagesFetched === 0) pathLog = path;
-        const html = await client.fetchHtml(path);
-        const uc = extractUc(html);
-        if (!uc) {
-          throw new Error(
-            `compass_search_properties: could not extract the uc state object from ${path}. ` +
-              `Compass may have changed their page bootstrap.`
-          );
-        }
-        const lol = findLolResults(uc);
-        if (totalItems === undefined) totalItems = lol?.totalItems;
-        const raw = lol?.data ?? [];
-        const formattedPage = raw
-          .map(formatHome)
-          .filter((h): h is FormattedHome => h !== null);
-
-        // On the first page, skip the intra-page offset; subsequent
-        // pages start clean.
-        const sliceStart = pagesFetched === 0 ? intraPageSkip : 0;
-        for (let i = sliceStart; i < formattedPage.length; i += 1) {
-          if (collected.length >= limit) break;
-          collected.push(formattedPage[i]);
-        }
-
-        pagesFetched += 1;
-        // If Compass returned fewer than a full page, the result set is
-        // exhausted — stop early even if we have not hit `limit`. Use
-        // the *raw* page size: `formattedPage` has already had entries
-        // without a `listingIdSHA` (cluster entries, "coming soon"
-        // stubs, etc.) filtered out by `formatHome`, so its length can
-        // drop below `COMPASS_PAGE_SIZE` even when Compass returned a
-        // full page.
-        if (raw.length < COMPASS_PAGE_SIZE) {
-          shortPage = true;
-          break;
-        }
-        // Likewise, if we know totalItems, stop once we have visited
-        // them all.
-        if (
-          totalItems !== undefined &&
-          offset + collected.length >= totalItems
-        ) {
-          break;
-        }
-        currentPage += 1;
+      // PAGINATION HONESTY (issue #87). Compass no longer paginates the
+      // SSR search via any URL: `/homes-for-sale/<slug>/page-N/`,
+      // `?page=N`, and `?start=N` all canonicalize back to page 1 and
+      // return the IDENTICAL `lolResults.data[]`. (Verified live: a
+      // /page-2/ fetch carries `<link rel=canonical>` pointing at the
+      // bare page-1 URL and the same first listing id.) Deeper pages now
+      // load post-hydration via an XHR endpoint that is not reachable
+      // through the SSR-only `fetchHtml` primitive this tool is built on.
+      //
+      // The only reachable batch is therefore the first SSR page, which
+      // carries `num` (~41) listings. We fetch exactly that page, honor
+      // an intra-page `offset`, and emit `next_offset` ONLY when more
+      // listings remain WITHIN that single reachable page — never a
+      // cursor that would just re-fetch page 1 (the old bug: a default
+      // limit-40 call advertised `next_offset: 40`, and `offset: 40`
+      // mapped to `page-9` yet returned the same first 40). To reach
+      // results beyond the first SSR page, narrow with `price_min` /
+      // `price_max` / `beds_min`/`beds_max` to bucket the result set.
+      const path = buildSearchPath(input);
+      const html = await client.fetchHtml(path);
+      const uc = extractUc(html);
+      if (!uc) {
+        throw new Error(
+          `compass_search_properties: could not extract the uc state object from ${path}. ` +
+            `Compass may have changed their page bootstrap.`
+        );
       }
+      const lol = findLolResults(uc);
+      const totalItems = lol?.totalItems;
+      const formattedPage = (lol?.data ?? [])
+        .map(formatHome)
+        .filter((h): h is FormattedHome => h !== null);
 
-      const consumed = offset + collected.length;
-      const hasMore =
-        totalItems !== undefined
-          ? consumed < totalItems
-          : // Without totalItems, infer "more" from a saturated last page.
-            // A short page already signals exhaustion, so suppress the
-            // fallback in that case to avoid a misleading `next_offset`.
-            !shortPage && collected.length >= limit;
+      // Slice the single reachable page by the requested offset. An
+      // offset at or beyond the page yields nothing — we can't reach
+      // page 2.
+      const results = formattedPage.slice(offset, offset + limit);
+      const consumed = offset + results.length;
+
+      // More remains ONLY if there are further listings within this same
+      // reachable page (i.e. we truncated by `limit`, not by exhausting
+      // the page). Once the first SSR page is exhausted we stop — never
+      // advertise a cursor we cannot honor.
+      const hasMore = consumed < formattedPage.length;
 
       return textResult({
-        search_path: pathLog,
+        search_path: path,
         total_items: totalItems,
-        count: collected.length,
+        count: results.length,
         offset,
-        results: collected,
+        results,
         ...(hasMore ? { next_offset: consumed } : {}),
       });
     }

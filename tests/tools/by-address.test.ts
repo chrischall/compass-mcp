@@ -830,30 +830,30 @@ describe('compass_get_by_address tool', () => {
       expect(parsed.url).toBeUndefined();
     });
 
-    it('page-walks slug results when first page has no match but second does', async () => {
+    it('matches within the single reachable slug page (#87: /page-N/ is dead)', async () => {
+      // Issue #87: Compass's `/page-N/` SSR path canonicalizes back to
+      // page 1 and returns identical data, so the slug rung fetches page
+      // 1 only — its ~41 listings are the entire reachable set. A match
+      // anywhere in that page resolves; no /page-N/ walk.
       mockFetchHtml.mockResolvedValueOnce(searchHtml([])); // ?q= empty
-      // Page 1: 5 entries, none match (full page → keep walking).
-      const page1Entries = Array.from({ length: 5 }, (_, i) => ({
-        listing: {
-          listingIdSHA: `sha-p1-${i}`,
-          pageLink: `/homedetails/p1-${i}/sha-p1-${i}_lid/`,
-          subtitles: [`${i + 1} Other St`, 'Lake Lure, NC'],
-        },
-      }));
-      mockFetchHtml.mockResolvedValueOnce(searchHtml(page1Entries));
-      // Page 2: includes the match.
-      mockFetchHtml.mockResolvedValueOnce(
-        searchHtml([
-          {
-            listing: {
-              listingIdSHA: 'sha-p2-hit',
-              pageLink: '/homedetails/126-sleeping-bear-ln/sha-p2-hit_lid/',
-              navigationPageLink: '/listing/126-sleeping-bear-ln/P2HIT_pid/',
-              subtitles: ['126 Sleeping Bear Ln', 'Lake Lure, NC 28746'],
-            },
+      const page1Entries = [
+        ...Array.from({ length: 5 }, (_, i) => ({
+          listing: {
+            listingIdSHA: `sha-p1-${i}`,
+            pageLink: `/homedetails/p1-${i}/sha-p1-${i}_lid/`,
+            subtitles: [`${i + 1} Other St`, 'Lake Lure, NC'],
           },
-        ])
-      );
+        })),
+        {
+          listing: {
+            listingIdSHA: 'sha-hit',
+            pageLink: '/homedetails/126-sleeping-bear-ln/sha-hit_lid/',
+            navigationPageLink: '/listing/126-sleeping-bear-ln/HITPID_pid/',
+            subtitles: ['126 Sleeping Bear Ln', 'Lake Lure, NC 28746'],
+          },
+        },
+      ];
+      mockFetchHtml.mockResolvedValueOnce(searchHtml(page1Entries));
       const r = await harness.callTool('compass_get_by_address', {
         address: '126 Sleeping Bear Ln',
         city: 'Lake Lure',
@@ -867,27 +867,27 @@ describe('compass_get_by_address tool', () => {
       }>(r);
       expect(parsed.resolved).toBe(true);
       expect(parsed.matched_via).toBe('search_fallback');
-      expect(parsed.listing_id_sha).toBe('sha-p2-hit');
-      // ?q= + page 1 + page 2 = 3 fetches.
-      expect(mockFetchHtml).toHaveBeenCalledTimes(3);
-      // Page 2 must use Compass's /page-2/ canonical path segment.
-      const page2Path = mockFetchHtml.mock.calls[2][0] as string;
-      expect(page2Path).toContain('/page-2/');
+      expect(parsed.listing_id_sha).toBe('sha-hit');
+      // ?q= + a single slug page = 2 fetches; NO /page-N/ walk.
+      expect(mockFetchHtml).toHaveBeenCalledTimes(2);
+      const slugPath = mockFetchHtml.mock.calls[1][0] as string;
+      expect(slugPath).not.toContain('/page-');
     });
 
-    it('stops slug page-walk when a short page signals exhaustion', async () => {
+    it('does not page-walk: a miss on the single slug page is final (#87)', async () => {
       mockFetchHtml.mockResolvedValueOnce(searchHtml([])); // ?q= empty
-      // Short page (<COMPASS_PAGE_SIZE) → exhausted, no further fetch.
+      // The single reachable slug page has no match → resolved:false,
+      // no /page-2/ fetch (it would just re-return this same page).
       mockFetchHtml.mockResolvedValueOnce(
-        searchHtml([
-          {
+        searchHtml(
+          Array.from({ length: 41 }, (_, i) => ({
             listing: {
-              listingIdSHA: 'sha-other',
-              pageLink: '/homedetails/x/sha-other_lid/',
-              subtitles: ['999 Other St', 'Lake Lure, NC'],
+              listingIdSHA: `sha-other-${i}`,
+              pageLink: `/homedetails/x-${i}/sha-other-${i}_lid/`,
+              subtitles: [`${i + 1} Other St`, 'Lake Lure, NC'],
             },
-          },
-        ])
+          }))
+        )
       );
       const r = await harness.callTool('compass_get_by_address', {
         address: '126 Sleeping Bear Ln',
@@ -897,8 +897,126 @@ describe('compass_get_by_address tool', () => {
       });
       const parsed = parseToolResult<{ resolved: boolean }>(r);
       expect(parsed.resolved).toBe(false);
-      // Only 2 fetches: ?q= + one slug page; no /page-2/ because short.
+      // Only 2 fetches: ?q= + one slug page; never a /page-2/.
       expect(mockFetchHtml).toHaveBeenCalledTimes(2);
+    });
+  });
+
+  // Issue #86 (P1-2): the search-backed locality rung must be FIRST-CLASS
+  // — it has far better recall than typeahead, so a typeahead miss/empty
+  // must reach it. In production the intervening free-text `?q=` rung
+  // hits the AWS WAF and *throws* (403 / sign-in interstitial); that
+  // exception was aborting the whole resolve before the high-recall slug
+  // rung ever ran. A content failure on the free-text rung must fall
+  // through to the slug search, not error out.
+  describe('#86 search-fallback is reachable when free-text rung errors (WAF)', () => {
+    it('CRITICAL: a WAF 403 on the ?q= rung falls through to the slug search', async () => {
+      // typeahead empty (default), ?q= throws (WAF), slug search matches.
+      mockFetchHtml.mockImplementation(async (path: string) => {
+        if (path.startsWith('/homes-for-sale/?q=')) {
+          throw new Error('Compass API error: 403 for GET /homes-for-sale/?q=...');
+        }
+        // slug rung
+        return searchHtml([
+          {
+            listing: {
+              listingIdSHA: 'sha-recall',
+              pageLink: '/homedetails/126-sleeping-bear-ln/sha-recall_lid/',
+              navigationPageLink: '/listing/126-sleeping-bear-ln/RECALLPID_pid/',
+              subtitles: ['126 Sleeping Bear Ln', 'Lake Lure, NC 28746'],
+            },
+          },
+        ]);
+      });
+      const r = await harness.callTool('compass_get_by_address', {
+        address: '126 Sleeping Bear Ln',
+        city: 'Lake Lure',
+        state: 'NC',
+        zip: '28746',
+      });
+      expect(r.isError).toBeFalsy();
+      const parsed = parseToolResult<{
+        resolved: boolean;
+        matched_via?: string;
+        listing_id_sha?: string;
+      }>(r);
+      expect(parsed.resolved).toBe(true);
+      expect(parsed.matched_via).toBe('search_fallback');
+      expect(parsed.listing_id_sha).toBe('sha-recall');
+    });
+
+    it('a sign-in interstitial on the ?q= rung still falls through to the slug search', async () => {
+      mockFetchHtml.mockImplementation(async (path: string) => {
+        if (path.startsWith('/homes-for-sale/?q=')) {
+          throw new Error(
+            'Not signed in to Compass. Open compass.com in your browser and sign in, then try again.'
+          );
+        }
+        return searchHtml([
+          {
+            listing: {
+              listingIdSHA: 'sha-recall-2',
+              pageLink: '/homedetails/126-sleeping-bear-ln/sha-recall-2_lid/',
+              subtitles: ['126 Sleeping Bear Ln', 'Lake Lure, NC 28746'],
+            },
+          },
+        ]);
+      });
+      const r = await harness.callTool('compass_get_by_address', {
+        address: '126 Sleeping Bear Ln',
+        city: 'Lake Lure',
+        state: 'NC',
+        zip: '28746',
+      });
+      const parsed = parseToolResult<{ resolved: boolean; matched_via?: string }>(r);
+      expect(parsed.resolved).toBe(true);
+      expect(parsed.matched_via).toBe('search_fallback');
+    });
+
+    it('a transport timeout on the ?q= rung still PROPAGATES (not swallowed as fall-through)', async () => {
+      // #85 boundary: a content failure (WAF) falls through, but a
+      // transport timeout must NOT be silently downgraded — it has to
+      // reach the per-row classifier so the resolver can report a
+      // retryable status instead of a false miss.
+      const { FetchproxyTimeoutError } = await import('@fetchproxy/server');
+      mockFetchHtml.mockImplementation(async (path: string) => {
+        if (path.startsWith('/homes-for-sale/?q=')) {
+          throw new FetchproxyTimeoutError({
+            url: 'https://www.compass.com/homes-for-sale/?q=...',
+            timeoutMs: 25,
+            elapsedMs: 28,
+            role: 'peer',
+            port: 37200,
+          });
+        }
+        return searchHtml([]);
+      });
+      const r = await harness.callTool('compass_get_by_address', {
+        address: '126 Sleeping Bear Ln',
+        city: 'Lake Lure',
+        state: 'NC',
+      });
+      // Single tool surfaces the transport error rather than a false miss.
+      expect(r.isError).toBeTruthy();
+      const text = (r.content[0] as { text: string }).text;
+      expect(text).toMatch(/timeout|did not respond/i);
+    });
+
+    it('still returns resolved:false when ?q= errors AND the slug rung genuinely has no match', async () => {
+      mockFetchHtml.mockImplementation(async (path: string) => {
+        if (path.startsWith('/homes-for-sale/?q=')) {
+          throw new Error('Compass API error: 403 for GET /homes-for-sale/?q=...');
+        }
+        return searchHtml([]); // slug rung: genuine miss
+      });
+      const r = await harness.callTool('compass_get_by_address', {
+        address: '126 Sleeping Bear Ln',
+        city: 'Lake Lure',
+        state: 'NC',
+      });
+      const parsed = parseToolResult<{ resolved: boolean; error?: string }>(r);
+      expect(parsed.resolved).toBe(false);
+      expect(parsed.error).toMatch(/no listing matched/i);
     });
   });
 });

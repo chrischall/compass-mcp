@@ -1,10 +1,14 @@
 import { z } from 'zod';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
+import {
+  FetchproxyBridgeDownError,
+  FetchproxyTimeoutError,
+} from '@fetchproxy/server';
 import type { CompassClient } from '../client.js';
 import { textResult } from '../mcp.js';
 import { extractUc } from '../page-state.js';
 import { extractPidFromUrl, locationToSlug } from '../url.js';
-import { COMPASS_PAGE_SIZE, findLolResults } from './search.js';
+import { findLolResults } from './search.js';
 import {
   OMNISUGGEST_AUTOCOMPLETE_PATH,
   buildAutocompleteBody,
@@ -35,8 +39,8 @@ import {
  *      lift its `listingIdSHA` + `pageLink` + `navigationPageLink`
  *      and tag `matched_via: "freetext"`. WAF-blocked today; kept as
  *      fallback in case it recovers.
- *   2. search_fallback — `/homes-for-sale/<locality-slug>/` SSR, page-
- *      walked up to `BY_ADDRESS_FALLBACK_MAX_PAGES`. Same address
+ *   2. search_fallback — `/homes-for-sale/<locality-slug>/` SSR (first
+ *      page only — `/page-N/` is dead, issue #87). Same address
  *      verifier. Fires only when the caller supplied enough locality
  *      (city/state, ZIP, etc.) to anchor on. Tag `matched_via:
  *      "search_fallback"`. Round-3 zillow corpus showed this rung
@@ -213,15 +217,6 @@ interface ByAddressUnresolved {
 
 type ByAddressResult = ByAddressResolved | ByAddressUnresolved;
 
-/**
- * Bound on slug-rung page-walk per call. Compass returns
- * COMPASS_PAGE_SIZE listings per SSR page; this cap keeps a worst-case
- * fallback from fanning out indefinitely on dense markets. Mirrors the
- * compass_search_properties `MAX_PAGES` cap (#47) at a tighter ceiling
- * because the by-address path is interactive.
- */
-export const BY_ADDRESS_FALLBACK_MAX_PAGES = 5;
-
 interface RawListingLike {
   listingIdSHA?: string;
   pageLink?: string;
@@ -296,6 +291,36 @@ async function fetchListings(
 }
 
 /**
+ * `fetchListings` that tolerates a *content* failure on an SSR rung
+ * (issue #86). compass.com runs AWS WAF; the free-text `?q=` SSR path
+ * 403s the bridge (and `client.fetchHtml` raises a 403 / sign-in
+ * interstitial error). That must NOT abort the resolve — the
+ * search-backed slug rung has far better recall and has to stay
+ * reachable. So a content failure here degrades to an empty candidate
+ * list (fall through), while a TRANSPORT fault (timeout / bridge-down,
+ * #85) is re-thrown so it can be classified as a retryable status
+ * rather than masked as "this rung found nothing".
+ */
+async function fetchListingsTolerant(
+  client: CompassClient,
+  path: string
+): Promise<Array<{ listing?: RawListingLike }>> {
+  try {
+    return await fetchListings(client, path);
+  } catch (e) {
+    if (
+      e instanceof FetchproxyTimeoutError ||
+      e instanceof FetchproxyBridgeDownError
+    ) {
+      throw e;
+    }
+    // WAF 403 / sign-in interstitial / HTTP error / parse fault — treat
+    // as "this rung surfaced nothing" and fall through to the next rung.
+    return [];
+  }
+}
+
+/**
  * Run the structured typeahead rung (issue #78/#79). POSTs the address
  * to Compass's omnisuggest autocomplete endpoint and shapes each
  * Addresses candidate into a `RawListingLike` so the shared
@@ -304,8 +329,18 @@ async function fetchListings(
  * carries no `_pid/`, so we leave `navigationPageLink`/`pageLink` unset
  * and `buildListingUrl` falls back to the `_lid/` form.
  *
- * Returns null on any failure (WAF 403, transport fault, empty) so the
- * caller falls through to the SSR rungs rather than erroring out.
+ * Returns null on a *content* failure (WAF 403, HTTP error, empty,
+ * parse fault) so the caller falls through to the SSR rungs.
+ *
+ * Transport faults are different (issue #85). A `FetchproxyTimeoutError`
+ * / `FetchproxyBridgeDownError` means we never got an answer from
+ * Compass — collapsing that to "typeahead had nothing" (null → fall
+ * through → SSR rungs that are WAF-walled → false "no listing matched")
+ * is exactly the misclassification that produced the false "covers only
+ * 4/60" conclusion. We re-throw those so `retryOnceOnTimeout` gets a
+ * chance and, failing that, the per-row classifier surfaces a distinct
+ * retryable `status: "timeout"` / `"bridge_down"` instead of a bare
+ * `resolved: false`.
  */
 async function fetchTypeaheadCandidates(
   client: CompassClient,
@@ -328,7 +363,15 @@ async function fetchTypeaheadCandidates(
         ),
       } satisfies RawListingLike,
     }));
-  } catch {
+  } catch (e) {
+    // Transport faults must NOT be swallowed (#85) — a timeout/bridge-
+    // down is "we never asked", not "Compass has nothing".
+    if (
+      e instanceof FetchproxyTimeoutError ||
+      e instanceof FetchproxyBridgeDownError
+    ) {
+      throw e;
+    }
     return null;
   }
 }
@@ -343,8 +386,9 @@ async function fetchTypeaheadCandidates(
  *   0. typeahead — POST `/api/v3/omnisuggest/autocomplete` (structured
  *      address) with `addressMatchesQuery` verify (#78/#79). PRIMARY.
  *   1. freetext — `/homes-for-sale/?q=<query>` with `addressMatchesQuery` verify
- *   2. search_fallback — `/homes-for-sale/<locality-slug>/` page-walked
- *      with the same verify (#71)
+ *   2. search_fallback — `/homes-for-sale/<locality-slug>/` first page
+ *      with the same verify (#71). `/page-N/` is dead (#87), so this
+ *      rung fetches page 1 only.
  */
 export async function resolveOneAddress(
   client: CompassClient,
@@ -367,33 +411,40 @@ export async function resolveOneAddress(
     }
   }
 
-  // Rung 1: free-text ?q= search.
+  // Rung 1: free-text ?q= search. WAF-walled in production (403) — a
+  // content failure here must fall through to the high-recall slug rung
+  // (#86), not abort the resolve. `fetchListingsTolerant` swallows the
+  // WAF 403 / sign-in error but still propagates a transport timeout
+  // (#85).
   const query = buildAddressQuery(input);
   const freetextPath = `/homes-for-sale/?q=${encodeURIComponent(query)}`;
-  const freetextEntries = await fetchListings(client, freetextPath);
+  const freetextEntries = await fetchListingsTolerant(client, freetextPath);
   const freetextMatch = findMatchingListing(freetextEntries, input);
   if (freetextMatch) {
     return { resolved: true, listing: freetextMatch, matched_via: 'freetext' };
   }
 
-  // Rung 2: slug-based search anchored on locality (#71).
+  // Rung 2: slug-based search anchored on locality (#71). This is the
+  // first-class, high-recall search rung (#86) — it must run even when
+  // the free-text rung above 403s. Tolerant of content faults for the
+  // same reason; transport faults still propagate (#85).
+  //
+  // Only the first SSR page is reachable (#87): `/page-N/` canonicalizes
+  // back to page 1 and returns the identical `lolResults`, so walking
+  // `page-2/`, `page-3/`, … just re-checks the same ~COMPASS_PAGE_SIZE
+  // listings. We fetch page 1 once. Its ~41 listings give this rung its
+  // recall; to find an address outside that page the caller must anchor
+  // on a tighter locality (ZIP vs. city).
   const slugBasePath = buildFallbackSlugPath(input);
   if (slugBasePath) {
-    for (let page = 1; page <= BY_ADDRESS_FALLBACK_MAX_PAGES; page += 1) {
-      // page=1 is canonical at the bare path (Compass redirects /page-1/).
-      const path =
-        page === 1 ? slugBasePath : `${slugBasePath}page-${page}/`;
-      const entries = await fetchListings(client, path);
-      const matched = findMatchingListing(entries, input);
-      if (matched) {
-        return {
-          resolved: true,
-          listing: matched,
-          matched_via: 'search_fallback',
-        };
-      }
-      // Short page → result set exhausted; stop walking.
-      if (entries.length < COMPASS_PAGE_SIZE) break;
+    const entries = await fetchListingsTolerant(client, slugBasePath);
+    const matched = findMatchingListing(entries, input);
+    if (matched) {
+      return {
+        resolved: true,
+        listing: matched,
+        matched_via: 'search_fallback',
+      };
     }
   }
 

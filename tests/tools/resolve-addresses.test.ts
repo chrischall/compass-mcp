@@ -1,5 +1,8 @@
 import { describe, it, expect, vi, beforeEach, afterAll } from 'vitest';
-import { FetchproxyTimeoutError } from '@fetchproxy/server';
+import {
+  FetchproxyBridgeDownError,
+  FetchproxyTimeoutError,
+} from '@fetchproxy/server';
 import type { CompassClient } from '../../src/client.js';
 import { registerResolveAddressesTools } from '../../src/tools/resolve-addresses.js';
 import { registerByAddressTools } from '../../src/tools/by-address.js';
@@ -134,10 +137,26 @@ describe('compass_resolve_addresses tool', () => {
   });
 
   it('captures per-row errors without failing the whole call', async () => {
-    let n = 0;
-    mockFetchHtml.mockImplementation(async () => {
-      n++;
-      if (n === 2) throw new Error('upstream fault');
+    // Per-row isolation: a transport fault on ONE address must surface
+    // on that row only (as a retryable #85 status) while the others
+    // resolve. Keyed on the address so it's deterministic under the
+    // concurrent fan-out (not call-order dependent). A generic SSR
+    // content error is no longer a per-row error — it falls through to
+    // the high-recall slug rung (#86) — so we inject a transport fault,
+    // which is the error class that legitimately surfaces per-row.
+    mockFetchHtml.mockImplementation(async (path: string) => {
+      const m = /q=([^&]+)/.exec(path);
+      const q = m ? decodeURIComponent(m[1]) : '';
+      if (q.includes('2 Main')) {
+        throw new FetchproxyTimeoutError({
+          url: 'https://www.compass.com/homes-for-sale/?q=...',
+          timeoutMs: 25,
+          elapsedMs: 28,
+          role: 'peer',
+          port: 37200,
+        });
+      }
+      const n = q.includes('1 Main') ? 1 : 3;
       return searchHtml([
         {
           listing: {
@@ -156,11 +175,11 @@ describe('compass_resolve_addresses tool', () => {
       ],
     });
     const parsed = parseToolResult<{
-      rows: Array<{ resolved: boolean; error?: string }>;
+      rows: Array<{ resolved: boolean; status?: string; error?: string }>;
     }>(r);
     expect(parsed.rows[0].resolved).toBe(true);
     expect(parsed.rows[1].resolved).toBe(false);
-    expect(parsed.rows[1].error).toMatch(/upstream fault/);
+    expect(parsed.rows[1].status).toBe('timeout');
     expect(parsed.rows[2].resolved).toBe(true);
   });
 
@@ -204,6 +223,130 @@ describe('compass_resolve_addresses tool', () => {
     expect(attempts).toBe(2);
     expect(parsed.rows[0].resolved).toBe(true);
     expect(parsed.rows[0].listing_id_sha).toBe('sha-retry');
+  });
+
+  // Issue #85 (P0-2): a transport timeout must NOT be collapsed into a
+  // genuine no-match. A cold-bridge typeahead/SSR timeout looks exactly
+  // like "Compass has no listing here" once it's flattened to
+  // `resolved: false`, which produced a false "covers only 4/60"
+  // conclusion. The row must surface a distinct, retryable status.
+  describe('#85 transport-timeout vs genuine miss', () => {
+    it('CRITICAL: a timeout after the one-shot retry surfaces status:"timeout", not a bare resolved:false', async () => {
+      // Both the typeahead JSON rung and the SSR rungs time out — and the
+      // retry times out too — so the error reaches the per-row outcome.
+      const timeout = () =>
+        new FetchproxyTimeoutError({
+          url: 'https://www.compass.com/...',
+          timeoutMs: 25,
+          elapsedMs: 28,
+          role: 'peer',
+          port: 37200,
+        });
+      mockFetchJson.mockRejectedValue(timeout());
+      mockFetchHtml.mockRejectedValue(timeout());
+
+      const r = await harness.callTool('compass_resolve_addresses', {
+        addresses: [
+          { address: '158 Raven Blvd', city: 'Lake Lure', state: 'NC', zip: '28746' },
+        ],
+      });
+      const parsed = parseToolResult<{
+        rows: Array<{
+          resolved: boolean;
+          status?: string;
+          retryable?: boolean;
+          error?: string;
+          url?: string;
+        }>;
+      }>(r);
+      const row = parsed.rows[0];
+      // The defect: timeout was indistinguishable from a genuine miss.
+      expect(row.status).toBe('timeout');
+      expect(row.retryable).toBe(true);
+      // Still no URL leak, but it is NOT reported as a clean "no match".
+      expect(row.url).toBeUndefined();
+      expect(row.resolved).toBe(false);
+      expect(row.error).toMatch(/timeout/i);
+    });
+
+    it('CRITICAL: a bridge-down error surfaces status:"bridge_down" / retryable, not a bare resolved:false', async () => {
+      const down = () =>
+        new FetchproxyBridgeDownError({
+          originalError: 'service worker not responding',
+          op: 'fetch',
+          url: 'https://www.compass.com/...',
+          role: 'peer',
+          port: 37200,
+          retryAttempted: true,
+        });
+      mockFetchJson.mockRejectedValue(down());
+      mockFetchHtml.mockRejectedValue(down());
+
+      const r = await harness.callTool('compass_resolve_addresses', {
+        addresses: [{ address: '158 Raven Blvd', city: 'Lake Lure', state: 'NC' }],
+      });
+      const parsed = parseToolResult<{
+        rows: Array<{ resolved: boolean; status?: string; retryable?: boolean }>;
+      }>(r);
+      expect(parsed.rows[0].status).toBe('bridge_down');
+      expect(parsed.rows[0].retryable).toBe(true);
+    });
+
+    it('a genuine empty-but-successful resolve stays resolved:false with NO timeout status', async () => {
+      // Typeahead returns an empty (successful) response; every SSR rung
+      // is reachable and simply has no matching listing. This is a real
+      // miss and must NOT carry a retryable timeout status.
+      mockFetchJson.mockResolvedValue({ categories: [] });
+      mockFetchHtml.mockResolvedValue(searchHtml([]));
+
+      const r = await harness.callTool('compass_resolve_addresses', {
+        addresses: [{ address: '999 Nowhere Rd', city: 'Atlantis', state: 'XX' }],
+      });
+      const parsed = parseToolResult<{
+        rows: Array<{
+          resolved: boolean;
+          status?: string;
+          retryable?: boolean;
+          error?: string;
+        }>;
+      }>(r);
+      expect(parsed.rows[0].resolved).toBe(false);
+      expect(parsed.rows[0].status).toBeUndefined();
+      expect(parsed.rows[0].retryable).toBeUndefined();
+      expect(parsed.rows[0].error).toMatch(/no listing/i);
+    });
+
+    it('a one-shot retry that succeeds still resolves cleanly (no spurious timeout status)', async () => {
+      // The typeahead rung times out once, the retry succeeds — the row
+      // must resolve, never carry a timeout status.
+      let attempts = 0;
+      mockFetchJson.mockImplementation(async () => {
+        attempts++;
+        if (attempts === 1) {
+          throw new FetchproxyTimeoutError({
+            url: 'https://www.compass.com/api/v3/omnisuggest/autocomplete',
+            timeoutMs: 25,
+            elapsedMs: 28,
+            role: 'peer',
+            port: 37200,
+          });
+        }
+        return omnisuggest([
+          { text: '158 Raven Blvd', subText: 'Lake Lure, NC', id: 'sha-ok' },
+        ]);
+      });
+
+      const r = await harness.callTool('compass_resolve_addresses', {
+        addresses: [{ address: '158 Raven Blvd', city: 'Lake Lure', state: 'NC' }],
+      });
+      const parsed = parseToolResult<{
+        rows: Array<{ resolved: boolean; status?: string; listing_id_sha?: string }>;
+      }>(r);
+      expect(attempts).toBe(2);
+      expect(parsed.rows[0].resolved).toBe(true);
+      expect(parsed.rows[0].status).toBeUndefined();
+      expect(parsed.rows[0].listing_id_sha).toBe('sha-ok');
+    });
   });
 
   // Issue #67: bulk vs single resolver parity audit.
@@ -485,6 +628,41 @@ describe('compass_resolve_addresses tool', () => {
       } finally {
         await singleHarness.close();
       }
+    });
+
+    // Issue #86 (P1-2): the high-recall slug search rung must stay
+    // reachable in BULK when the WAF-walled free-text ?q= rung throws.
+    it('CRITICAL #86: bulk reaches the slug search rung when ?q= 403s', async () => {
+      // typeahead empty (default), ?q= throws (WAF), slug search matches.
+      mockFetchHtml.mockImplementation(async (path: string) => {
+        if (path.startsWith('/homes-for-sale/?q=')) {
+          throw new Error('Compass API error: 403 for GET /homes-for-sale/?q=...');
+        }
+        return searchHtml([
+          {
+            listing: {
+              listingIdSHA: 'sha-bulk-recall',
+              pageLink: '/homedetails/126-sleeping-bear-ln/sha-bulk-recall_lid/',
+              subtitles: ['126 Sleeping Bear Ln', 'Lake Lure, NC 28746'],
+            },
+          },
+        ]);
+      });
+      const r = await harness.callTool('compass_resolve_addresses', {
+        addresses: [
+          { address: '126 Sleeping Bear Ln', city: 'Lake Lure', state: 'NC' },
+        ],
+      });
+      const parsed = parseToolResult<{
+        rows: Array<{
+          resolved: boolean;
+          matched_via?: string;
+          listing_id_sha?: string;
+        }>;
+      }>(r);
+      expect(parsed.rows[0].resolved).toBe(true);
+      expect(parsed.rows[0].matched_via).toBe('search_fallback');
+      expect(parsed.rows[0].listing_id_sha).toBe('sha-bulk-recall');
     });
   });
 
