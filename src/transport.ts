@@ -11,7 +11,7 @@
 
 export interface FetchInit {
   /** Path-and-query relative to https://www.compass.com, e.g.
-   *  `/homedetails/.../12345_zpid/` or `/async-create-search-page-state/`. */
+   *  `/homedetails/<slug>/<sha>_lid/` or `/homes-for-sale/<slug>/`. */
   path: string;
   method: 'GET' | 'POST' | 'PUT' | 'DELETE';
   headers?: Record<string, string>;
