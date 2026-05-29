@@ -71,7 +71,7 @@ export function registerPhotosTools(
     {
       title: 'Get Compass property photo gallery',
       description:
-        "The full photo gallery for a Compass listing — every image in listing.media[]. Each entry returns the original CDN URL plus a thumbnail URL and pixel dimensions. Pass either `url` (the full Compass homedetails URL or path) or `listing_id_sha` alone — sha-only calls are resolved internally via Compass site search. By default only photos (category 0) are returned; set `include_all_categories: true` to also include floorplans and other media. Returns `{ listing_id_sha, count, photos }`. Read-only; safe to call repeatedly.",
+        "The full photo gallery for a Compass listing — every image in listing.media[]. Each entry returns the original CDN URL plus a thumbnail URL and pixel dimensions. Pass either `url` (the full Compass homedetails URL or path) or `listing_id_sha` alone — sha-only calls fetch /listing/<sha>/view, which redirects to the homedetails page. By default only photos (category 0) are returned; set `include_all_categories: true` to also include floorplans and other media. Returns `{ listing_id_sha, count, photos }`. Read-only; safe to call repeatedly.",
       annotations: {
         title: 'Get Compass property photo gallery',
         readOnlyHint: true,

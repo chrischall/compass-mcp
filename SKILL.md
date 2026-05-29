@@ -89,7 +89,7 @@ That's it. No API keys, no env vars.
 ## Gotchas
 
 - **Sign-in required.** If the user isn't signed into compass.com in the bridged Chrome tab, network tools fail with `SessionNotAuthenticatedError`. Local-math tools work either way.
-- **AWS WAF challenge.** Compass serves a WAF challenge to fresh sessions and 403s some SSR free-text paths. The address resolver and sha resolution route through the WAF-immune omnisuggest typeahead to avoid it; solving a challenge in the Chrome tab once unblocks the SSR pages.
+- **AWS WAF challenge.** Compass serves a WAF challenge to fresh sessions and 403s some SSR free-text paths. The address resolver routes through the WAF-immune omnisuggest typeahead to avoid it, and sha-only lookups use the WAF-immune `/listing/<sha>/view` redirect; solving a challenge in the Chrome tab once unblocks the SSR pages.
 - **No write surface.** All tools are read-only — no saving homes/searches or submitting contact forms.
 - **No market-report / Zestimate-history tool.** Compass doesn't expose region-level market data or a historical estimate series in its SSR blob, so there's no equivalent to a market-report tool.
 - **Saved homes/searches are stubs.** See "Not yet supported" above.

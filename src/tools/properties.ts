@@ -7,12 +7,6 @@ import { extractAgentSlug, extractPidFromUrl, urlToPath } from '../url.js';
 import { compassListingUrl } from './by-address.js';
 import { loadCommunities } from '../features.js';
 import {
-  OMNISUGGEST_AUTOCOMPLETE_PATH,
-  extractAddressCandidates,
-  type AutocompleteBody,
-  type OmnisuggestResponse,
-} from './typeahead.js';
-import {
   extractFeatures,
   type ExtractedFeatures,
   hoaToMonthlyUsd,
@@ -380,9 +374,10 @@ export function findListing(data: Record<string, unknown>): RawListing | null {
  *
  * Compass routes homedetails by `/homedetails/<slug>/<sha>_lid/` — the
  * slug-less `/homedetails/<sha>_lid/` form returns 410 Gone — so a bare
- * sha cannot become a working path without an extra lookup. That lookup
- * is async (it hits Compass's search), so this function returns `null`
- * to defer; sync callers should use the async resolver instead.
+ * sha needs the `/listing/<sha>/view` route (which 302-redirects to the
+ * slugged homedetails page). `resolvePathFromSha` builds that path; this
+ * function returns `null` to defer to it (it's async because callers
+ * `await` it), so sync callers should use the async resolver instead.
  */
 export function buildPath(args: {
   listing_id_sha?: string;
@@ -396,46 +391,36 @@ export function buildPath(args: {
 }
 
 /**
- * Resolve a `listing_id_sha` to a fetchable Compass homedetails path.
+ * Resolve a `listing_id_sha` to a fetchable Compass listing path.
  *
- * Routes through the structured omnisuggest typeahead — the same
- * WAF-immune rung `compass_get_by_address` uses (issue #78/#79) — rather
- * than the SSR free-text `/homes-for-sale/?q=<sha>` path, which compass.com
- * 403s under AWS WAF (so sha-only `get_property` / `photos` / `history` /
- * `compare` / `bulk_get` were failing in prod whenever they hit it).
+ * The sha IS the listing id in Compass's `/listing/<id>/view` route, and
+ * a GET of `/listing/<sha>/view` 302-redirects to the canonical
+ * `/homedetails/<slug>/<sha>_lid/` page (verified live against a signed-in
+ * session: 200 with the full `__INITIAL_DATA__`, and WAF-immune). So the
+ * resolver simply returns `/listing/<sha>/view` — no lookup needed. The
+ * client's `fetchHtml` follows the 302 (the fetchproxy bridge uses the
+ * browser's default `redirect: 'follow'`), and the existing homedetails
+ * parser handles the redirected body.
  *
- * The omnisuggest `id` IS the `listingIdSHA`, so we POST the sha as `q`,
- * find the candidate whose `id === sha`, and return its `redirectUrl`
- * (the `/listing/<sha>/view` path the server redirects to the canonical
- * homedetails page). The slug-less `/homedetails/<sha>_lid/` form 410s,
- * so the redirect path is the reliable way to reach the listing record
- * without already knowing the slug.
+ * We deliberately do NOT route a bare sha through the omnisuggest
+ * autocomplete here: that endpoint is an ADDRESS typeahead, so querying
+ * it with a sha returns 200 with zero candidates and any `id === sha`
+ * match is always undefined — which is exactly why the prior path
+ * (#95) always threw. (The shared omnisuggest typeahead is still the
+ * by-address rung's resolver — see `tools/by-address.ts`; only the
+ * sha-path's misuse of it is gone.)
  *
- * Throws when no candidate matches — the error names the sha and points
- * the caller at the `url` field of a `compass_search_properties` result
- * as a manual fallback.
+ * A genuinely bad/stale sha no longer fails here — it surfaces downstream
+ * via `fetchHtml` (a 410 Gone, the sign-in interstitial, or a missing
+ * `__INITIAL_DATA__`), where the client's existing error mapping reports
+ * it cleanly. The async signature is kept so callers that `await` the
+ * resolver (and any future lookup-based fallback) stay unchanged.
  */
 export async function resolvePathFromSha(
-  client: CompassClient,
+  _client: CompassClient,
   sha: string
 ): Promise<string> {
-  const body: AutocompleteBody = { q: sha, sources: [0] };
-  const resp = await client.fetchJson<OmnisuggestResponse>(
-    OMNISUGGEST_AUTOCOMPLETE_PATH,
-    { method: 'POST', body }
-  );
-  const candidates = extractAddressCandidates(resp);
-  const match = candidates.find((c) => c.id === sha);
-  const redirectUrl = match?.redirectUrl;
-  if (!redirectUrl) {
-    throw new Error(
-      `Could not resolve listing_id_sha "${sha}" to a Compass URL via the omnisuggest typeahead. ` +
-        `Compass returns 410 Gone for the slug-less /homedetails/<sha>_lid/ form, ` +
-        `and no autocomplete candidate matched the sha. If you have the address, ` +
-        `pass the \`url\` field from a compass_search_properties result instead.`
-    );
-  }
-  return urlToPath(redirectUrl);
+  return `/listing/${sha}/view`;
 }
 
 /**
@@ -444,8 +429,9 @@ export async function resolvePathFromSha(
  * `compass_compare_properties`.
  *
  * When called with `listing_id_sha` alone, runs `resolvePathFromSha`
- * first to recover the canonical `/homedetails/<slug>/<sha>_lid/` path
- * via Compass site search, then fetches normally.
+ * first to map the sha to `/listing/<sha>/view`, then fetches normally —
+ * `fetchHtml` follows the 302 to the canonical
+ * `/homedetails/<slug>/<sha>_lid/` page.
  */
 export async function fetchListingRecord(
   client: CompassClient,
@@ -453,7 +439,8 @@ export async function fetchListingRecord(
 ): Promise<{ listing: RawListing; path: string }> {
   let path = buildPath(args);
   if (path === null) {
-    // buildPath returned null → sha-only call. Resolve via search.
+    // buildPath returned null → sha-only call. Map the sha to its
+    // `/listing/<sha>/view` path; fetchHtml follows the 302 to homedetails.
     path = await resolvePathFromSha(client, args.listing_id_sha as string);
   }
   const html = await client.fetchHtml(path);
@@ -730,7 +717,7 @@ export function registerPropertyTools(
     {
       title: 'Get Compass property details',
       description:
-        "Fetch a property's full Compass record. Pass either `url` (a full Compass homedetails URL or path from a compass_search_properties result) or `listing_id_sha` alone — when only the sha is supplied, the tool resolves the canonical /homedetails/<slug>/<sha>_lid/ path internally via Compass site search. Returns address, neighborhood, beds/baths, sqft, lot size (`lot_size_sqft` plus the derived `lot_size_acres` = round(sqft / 43560, 2), null — never 0 — for condos / missing lots), price + price-per-sqft, monthly charges, MLS status, amenities, schools, parcel number, and the canonical Compass URL. Also returns `extracted_features` (lake_front, hot_tub, basement, furnished, dock, community) keyword-parsed from the description.\n\n" +
+        "Fetch a property's full Compass record. Pass either `url` (a full Compass homedetails URL or path from a compass_search_properties result) or `listing_id_sha` alone — when only the sha is supplied, the tool fetches /listing/<sha>/view, which redirects to the canonical /homedetails/<slug>/<sha>_lid/ page. Returns address, neighborhood, beds/baths, sqft, lot size (`lot_size_sqft` plus the derived `lot_size_acres` = round(sqft / 43560, 2), null — never 0 — for condos / missing lots), price + price-per-sqft, monthly charges, MLS status, amenities, schools, parcel number, and the canonical Compass URL. Also returns `extracted_features` (lake_front, hot_tub, basement, furnished, dock, community) keyword-parsed from the description.\n\n" +
         "DESCRIPTION HANDLING: The raw `description` (Compass marketing copy) is omitted by default — pass `include_description: true` to keep it. `extracted_features` is always populated and usually sufficient.\n\n" +
         "URL FORMS: Compass exposes two URL shapes for a listing. `_lid/` (content-addressed by `listing_id_sha`) — what this tool fetches and what `url` returns — is the form to use for reading the current listing record. `_pid/` (opaque short ID, in `property_url` and the surfaced `pid` field) is **stable across re-listings** and is the right choice for any long-lived reference (trackers, sheets, bookmarks); sha-based URLs go stale when a property is delisted and relisted. Read-only; safe to call repeatedly.",
       annotations: {
@@ -750,7 +737,7 @@ export function registerPropertyTools(
           .string()
           .optional()
           .describe(
-            'Compass listing identifier (the SHA inside `<sha>_lid`). Sufficient on its own — the tool will resolve the address slug internally via Compass site search before fetching the homedetails page (one extra HTTP round-trip).'
+            'Compass listing identifier (the SHA inside `<sha>_lid`). Sufficient on its own — the tool fetches /listing/<sha>/view, which 302-redirects to the slugged homedetails page (no extra lookup; the fetch follows the redirect).'
           ),
         include_description: z
           .boolean()

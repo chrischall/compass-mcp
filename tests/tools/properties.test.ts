@@ -49,74 +49,34 @@ describe('buildPath', () => {
 });
 
 describe('resolvePathFromSha', () => {
-  // Build an omnisuggest autocomplete response — the WAF-immune
-  // structured typeahead rung (issue #78/#79). The candidate `id` IS the
-  // `listingIdSHA`, and `redirectUrl` is the `/listing/<id>/view` path
-  // the server redirects to the canonical homedetails page.
-  const omnisuggest = (
-    items: Array<{ text?: string; subText?: string; id: string; redirectUrl?: string }>
-  ) => ({
-    categories: [{ name: 1, label: 'Addresses', items }],
-    success: true,
-  });
+  // The sha IS the listing id in `/listing/<id>/view`, and a GET of that
+  // path 302-redirects to the canonical `/homedetails/<slug>/<sha>_lid/`
+  // page (verified live, WAF-immune). So the resolver returns that path
+  // directly — no omnisuggest call. Querying omnisuggest (an ADDRESS
+  // typeahead) with a bare sha returns zero candidates, which is why the
+  // prior #95 path always threw.
 
-  it('resolves the sha via the omnisuggest typeahead, NOT the WAF-walled ?q= SSR path', async () => {
-    const fetchJson = vi.fn().mockResolvedValueOnce(
-      omnisuggest([
-        {
-          text: '126 Sleeping Bear Ln',
-          subText: 'Lake Lure, NC',
-          id: '1887095624271872617',
-          redirectUrl: '/listing/1887095624271872617/view',
-        },
-      ])
-    );
+  it('returns the /listing/<sha>/view redirect path directly', async () => {
+    const fetchJson = vi.fn();
     const fetchHtml = vi.fn();
     const client = { fetchHtml, fetchJson } as unknown as CompassClient;
 
     const path = await resolvePathFromSha(client, '1887095624271872617');
-    // POSTs the sha as `q` to the WAF-immune autocomplete endpoint.
-    const [calledPath, init] = fetchJson.mock.calls[0];
-    expect(calledPath).toBe('/api/v3/omnisuggest/autocomplete');
-    expect(init).toMatchObject({ method: 'POST' });
-    expect((init as { body: { q: string } }).body.q).toBe('1887095624271872617');
-    // It returns the candidate's redirect path (resolves to homedetails).
     expect(path).toBe('/listing/1887095624271872617/view');
-    // The WAF-walled SSR free-text path must NOT be touched.
+    // No HTTP round-trip in the resolver itself — the sha maps straight
+    // to the listing-view path. The downstream fetchHtml follows the 302.
+    expect(fetchJson).not.toHaveBeenCalled();
     expect(fetchHtml).not.toHaveBeenCalled();
   });
 
-  it('picks the candidate whose id matches the sha (ignores other suggestions)', async () => {
-    const fetchJson = vi.fn().mockResolvedValueOnce(
-      omnisuggest([
-        { text: 'Other', id: 'wrong-sha', redirectUrl: '/listing/wrong-sha/view' },
-        {
-          text: '126 Sleeping Bear Ln',
-          id: '1887095624271872617',
-          redirectUrl: '/listing/1887095624271872617/view',
-        },
-      ])
-    );
+  it('does NOT touch the omnisuggest typeahead (it returns nothing for a sha)', async () => {
+    const fetchJson = vi.fn();
     const client = {
       fetchHtml: vi.fn(),
       fetchJson,
     } as unknown as CompassClient;
-    const path = await resolvePathFromSha(client, '1887095624271872617');
-    expect(path).toBe('/listing/1887095624271872617/view');
-  });
-
-  it('throws a clear error when no autocomplete candidate matches the sha', async () => {
-    const fetchJson = vi.fn().mockResolvedValue(omnisuggest([]));
-    const client = {
-      fetchHtml: vi.fn(),
-      fetchJson,
-    } as unknown as CompassClient;
-    await expect(resolvePathFromSha(client, 'unknown-sha')).rejects.toThrow(
-      /unknown-sha/
-    );
-    await expect(resolvePathFromSha(client, 'unknown-sha')).rejects.toThrow(
-      /url/
-    );
+    await resolvePathFromSha(client, 'another-sha');
+    expect(fetchJson).not.toHaveBeenCalled();
   });
 });
 
@@ -455,22 +415,12 @@ describe('compass_get_property tool', () => {
     expect(parsed.lot_size_acres).not.toBe(0);
   });
 
-  it('resolves a sha-only call via the WAF-immune typeahead, then fetches the listing', async () => {
-    // Step 1: sha-only invocation triggers the resolver, which POSTs the
-    // sha to the omnisuggest autocomplete endpoint (NOT the WAF-walled
-    // /homes-for-sale/?q= SSR path) and reads the matching candidate's
-    // redirect path.
-    mockFetchJson.mockResolvedValueOnce({
-      categories: [
-        {
-          name: 1,
-          label: 'Addresses',
-          items: [{ text: '1 Main', id: 'abc', redirectUrl: '/listing/abc/view' }],
-        },
-      ],
-      success: true,
-    });
-    // Step 2: the resolver path is then fetched normally for the listing record.
+  it('resolves a sha-only call via the /listing/<sha>/view redirect, then fetches the listing', async () => {
+    // A sha-only invocation resolves to `/listing/<sha>/view` (no
+    // omnisuggest call — that endpoint is an ADDRESS typeahead and
+    // returns nothing for a sha). `fetchHtml` GETs that path; the bridge
+    // follows the 302 to `/homedetails/<slug>/<sha>_lid/` and returns the
+    // homedetails body, which the existing parser handles.
     const listingHtml = htmlWith({
       listingIdSHA: 'abc',
       pageLink: '/homedetails/foo/abc_lid/',
@@ -482,9 +432,8 @@ describe('compass_get_property tool', () => {
       listing_id_sha: 'abc',
     });
     expect(r.isError).toBeFalsy();
-    // Resolution goes through the typeahead; only the resolved homedetails
-    // path is fetched as HTML — the WAF-walled ?q= rung is never hit.
-    expect(mockFetchJson.mock.calls[0][0]).toBe('/api/v3/omnisuggest/autocomplete');
+    // No omnisuggest round-trip; the listing-view path is fetched directly.
+    expect(mockFetchJson).not.toHaveBeenCalled();
     expect(mockFetchHtml.mock.calls.map((c) => c[0])).toEqual([
       '/listing/abc/view',
     ]);
@@ -493,21 +442,23 @@ describe('compass_get_property tool', () => {
     expect(parsed.listing_id_sha).toBe('abc');
   });
 
-  it('returns a clear error when a sha-only call resolves to nothing', async () => {
-    // Resolver returns no matching candidate → tool surfaces a helpful
-    // error that names the next-best-action: pass the `url` from a search
-    // result.
-    mockFetchJson.mockResolvedValueOnce({
-      categories: [{ name: 1, label: 'Addresses', items: [] }],
-      success: true,
-    });
+  it('surfaces a clean downstream error when a bad sha 410s / hits the sign-in wall', async () => {
+    // A genuinely bad/stale sha no longer fails in the resolver — it now
+    // surfaces via the downstream fetchHtml. The client's GET of
+    // `/listing/<sha>/view` either 410s (Gone) or hits the sign-in
+    // interstitial; either way fetchHtml throws and the tool relays a
+    // clean error rather than a cryptic one.
+    mockFetchHtml.mockRejectedValueOnce(
+      new Error('Compass API error: 410 for GET /listing/no-such-sha/view')
+    );
     const r = await harness.callTool('compass_get_property', {
       listing_id_sha: 'no-such-sha',
     });
     expect(r.isError).toBeTruthy();
+    expect(mockFetchJson).not.toHaveBeenCalled();
+    expect(mockFetchHtml.mock.calls[0][0]).toBe('/listing/no-such-sha/view');
     const text = (r.content[0] as { text: string }).text;
-    expect(text).toMatch(/no-such-sha/);
-    expect(text).toMatch(/url/);
+    expect(text).toMatch(/410/);
   });
 
   it('throws when __INITIAL_DATA__ is absent', async () => {
