@@ -31,7 +31,7 @@ import { registerResolveAddressesTools } from './tools/resolve-addresses.js';
 import { registerSessionTools } from './tools/session.js';
 import { registerComparableRentalsTools } from './tools/comparable-rentals.js';
 
-const VERSION = '0.9.0'; // x-release-please-version
+const VERSION = '0.10.0'; // x-release-please-version
 
 const port = process.env.COMPASS_WS_PORT
   ? Number(process.env.COMPASS_WS_PORT)
