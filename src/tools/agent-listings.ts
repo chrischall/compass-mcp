@@ -3,7 +3,7 @@ import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import type { CompassClient } from '../client.js';
 import { textResult } from '../mcp.js';
 import { extractAgentProfile } from '../page-state.js';
-import { agentProfilePath, extractAgentSlug } from '../url.js';
+import { extractAgentSlug } from '../url.js';
 import { format, type RawListing } from './properties.js';
 
 /**
@@ -116,7 +116,7 @@ export function registerAgentListingsTools(
       description:
         "Fetch the listings represented by a Compass agent from their profile page (/agents/<slug>/). Pass either `slug` (e.g. \"paige-mcguirk\") or `profile_url` (a full https://www.compass.com/agents/<slug>/ URL — both forms are accepted). Returns `{ agent: {name, slug}, active_listings: [...] }`, where each active listing carries the SAME normalized fields as compass_get_property (address, beds/baths, sqft, lot size, price + price-per-sqft, MLS status, the canonical Compass URL + stable pid, extracted_features, etc.).\n\n" +
         "CLOSED DEALS: the agent's sold/closed deals are opt-in — pass `include_closed: true` to add a `closed_deals` array (same normalized shape). Omitted by default to keep the payload lean.\n\n" +
-        "CHAINING: the agent slug is surfaced on each property's `listing_agent.profile_slug` (from compass_get_property / compass_search results), so you can go property → agent → their other listings. Read-only; safe to call repeatedly.",
+        "CHAINING: the agent slug is surfaced on each property's `listing_agent.profile_slug` in compass_get_property results (compass_search_properties results don't carry the listing agent), so you can go property → agent → their other listings. Read-only; safe to call repeatedly.",
       annotations: {
         title: "Get a Compass agent's listings",
         readOnlyHint: true,
@@ -152,9 +152,10 @@ export function registerAgentListingsTools(
         );
       }
       // extractAgentSlug normalizes both forms (and throws on a non-/agents/
-      // URL). agentProfilePath then builds /agents/<slug>/.
+      // URL or a malformed slug). The slug is already resolved + validated,
+      // so build the path directly rather than re-running extractAgentSlug.
       const resolvedSlug = extractAgentSlug(ref);
-      const path = agentProfilePath(resolvedSlug);
+      const path = `/agents/${resolvedSlug}/`;
       const html = await client.fetchHtml(path);
       const data = extractAgentProfile(html);
       if (!data) {

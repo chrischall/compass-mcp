@@ -50,11 +50,26 @@ export function extractPidFromUrl(
  *   - an `/agents/<slug>/` path (leading slash optional, trailing optional)
  *   - a full profile URL:     `https://www.compass.com/agents/paige-mcguirk/`
  *
- * Query strings and fragments are ignored. Throws on empty input, and on a
- * compass URL/path that isn't an `/agents/` profile reference (so a caller
- * who fat-fingers a homedetails URL gets a clear error rather than a
- * silently-wrong fetch).
+ * Query strings and fragments are ignored. Slugs are lowercased and must
+ * match `^[a-z0-9-]+$` (the shape of a real Compass agent slug). Throws on
+ * empty input, on a compass URL/path that isn't an `/agents/` profile
+ * reference, and on a slug carrying illegal characters (e.g. `..`,
+ * `foo bar`) — so a caller who fat-fingers a reference gets a clear error
+ * rather than a silently-wrong / malformed fetch.
  */
+const AGENT_SLUG_RE = /^[a-z0-9-]+$/;
+
+function validateAgentSlug(slug: string, original: string): string {
+  const normalized = slug.trim().toLowerCase();
+  if (!AGENT_SLUG_RE.test(normalized)) {
+    throw new Error(
+      `compass agent tool: "${original}" is not a valid Compass agent slug. ` +
+        'Expected a slug matching ^[a-z0-9-]+$ (e.g. "paige-mcguirk").'
+    );
+  }
+  return normalized;
+}
+
 export function extractAgentSlug(slugOrUrl: string): string {
   const trimmed = (slugOrUrl ?? '').trim();
   if (!trimmed) {
@@ -71,10 +86,19 @@ export function extractAgentSlug(slugOrUrl: string): string {
           'Expected a bare slug or a /agents/<slug>/ URL.'
       );
     }
-    return m[1];
+    // decodeURIComponent throws a URIError on a malformed percent-encoding
+    // (e.g. `%ZZ`); fall back to the raw segment so validateAgentSlug
+    // surfaces the clear slug error rather than the raw URIError.
+    let decoded: string;
+    try {
+      decoded = decodeURIComponent(m[1]);
+    } catch {
+      decoded = m[1];
+    }
+    return validateAgentSlug(decoded, slugOrUrl);
   }
   // Bare slug.
-  return trimmed;
+  return validateAgentSlug(trimmed, slugOrUrl);
 }
 
 /**

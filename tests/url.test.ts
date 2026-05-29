@@ -88,6 +88,34 @@ describe('extractAgentSlug (#52)', () => {
       extractAgentSlug('https://www.compass.com/homedetails/foo/abc_lid/')
     ).toThrow(/agents/);
   });
+
+  it('lowercases a mixed-case bare slug', () => {
+    expect(extractAgentSlug('Paige-McGuirk')).toBe('paige-mcguirk');
+  });
+
+  it('lowercases a slug pulled from a URL', () => {
+    expect(
+      extractAgentSlug('https://www.compass.com/agents/Paige-McGuirk/')
+    ).toBe('paige-mcguirk');
+  });
+
+  it('rejects a bare slug with illegal characters', () => {
+    expect(() => extractAgentSlug('foo bar')).toThrow(/slug/i);
+    expect(() => extractAgentSlug('..')).toThrow(/slug/i);
+    expect(() => extractAgentSlug('foo/bar/baz')).toThrow(/agents/i);
+    expect(() => extractAgentSlug('paige_mcguirk')).toThrow(/slug/i);
+    expect(() => extractAgentSlug('paige.mcguirk')).toThrow(/slug/i);
+  });
+
+  it('rejects a malformed slug pulled from an /agents/<slug>/ URL/path', () => {
+    expect(() =>
+      extractAgentSlug('https://www.compass.com/agents/foo bar/')
+    ).toThrow(/slug/i);
+    expect(() => extractAgentSlug('/agents/..%2f/')).toThrow(/slug/i);
+    // A malformed percent-encoding must surface the clear slug error, not a
+    // raw URIError from decodeURIComponent.
+    expect(() => extractAgentSlug('/agents/%ZZ/')).toThrow(/slug/i);
+  });
 });
 
 describe('agentProfilePath (#52)', () => {

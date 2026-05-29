@@ -606,6 +606,31 @@ describe('compass_get_property tool', () => {
       expect(out.listing_agent?.profile_slug).toBeUndefined();
       expect(out.listing_agent?.profile_url).toBeUndefined();
     });
+
+    it('omits profile_slug/profile_url (no throw) when the agent profileUrl is malformed (#52)', () => {
+      // A non-/agents/ href that also fails slug validation must be swallowed
+      // by the try/catch in format(): listing_agent still returns, just
+      // without the chain fields — the whole property fetch must not fail.
+      const out = format({
+        listingIdSHA: 'a',
+        pageLink: '/x/a_lid/',
+        agents: [
+          {
+            id: 'agent-1',
+            fullName: 'Bad Href',
+            companyName: 'Compass',
+            profileUrl: 'not a valid slug!!',
+          },
+        ],
+      });
+      expect(out.listing_agent).toEqual({
+        id: 'agent-1',
+        name: 'Bad Href',
+        brokerage: 'Compass',
+      });
+      expect(out.listing_agent?.profile_slug).toBeUndefined();
+      expect(out.listing_agent?.profile_url).toBeUndefined();
+    });
   });
 
   describe('P1 derived schema (issues #36, #37, #38, #43, #44)', () => {

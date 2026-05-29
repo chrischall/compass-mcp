@@ -118,6 +118,37 @@ describe('findAgentIdentity', () => {
     );
     expect(ident.slug).toBe('some-agent');
   });
+
+  it('composes the name from firstName/lastName when `name` is absent', () => {
+    const ident = findAgentIdentity(
+      {
+        data: {
+          agentProfileProps: {
+            agentInfo: { firstName: 'Paige', lastName: 'McGuirk', slug: 'paige-mcguirk' },
+          },
+        },
+      },
+      'paige-mcguirk'
+    );
+    expect(ident).toEqual({ name: 'Paige McGuirk', slug: 'paige-mcguirk' });
+  });
+
+  it('reads name from props.name when agentInfo/agent are absent', () => {
+    const ident = findAgentIdentity(
+      { data: { agentProfileProps: { name: 'Top Level Name' } } },
+      'top-level'
+    );
+    expect(ident).toEqual({ name: 'Top Level Name', slug: 'top-level' });
+  });
+
+  it('leaves name undefined (empty fallback) when no identity is present at all', () => {
+    const ident = findAgentIdentity(
+      { data: { agentProfileProps: {} } },
+      'some-agent'
+    );
+    expect(ident.name).toBeUndefined();
+    expect(ident.slug).toBe('some-agent');
+  });
 });
 
 describe('compass_get_agent_listings tool', () => {
