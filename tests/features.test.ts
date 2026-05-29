@@ -167,6 +167,23 @@ describe('extractFeatures', () => {
         extractFeatures('Private dock at the marina', baseCommunities).dock
       ).toBe('private');
     });
+    // Marina place-name guard (realty-core 0.4.0 / realty-mcp#1): "marina"
+    // appearing as part of a proper place name (neighborhood, development,
+    // street) is NOT a dock amenity signal and must not set `dock`.
+    it.each(['Marina Bay', 'Marina del Rey', '123 Marina Dr'])(
+      'does NOT treat the place name %j as a dock signal (returns null)',
+      (text) => {
+        expect(extractFeatures(text, baseCommunities).dock).toBeNull();
+      }
+    );
+    // ...but a genuine reference to *the marina* as a feature still maps to
+    // 'marina'.
+    it.each([
+      'Gorgeous lakefront marina with boat access',
+      'Steps from the marina.',
+    ])('still returns "marina" for a genuine marina reference (%j)', (text) => {
+      expect(extractFeatures(text, baseCommunities).dock).toBe('marina');
+    });
   });
 
   describe('community', () => {
