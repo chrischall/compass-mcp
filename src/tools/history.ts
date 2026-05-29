@@ -60,13 +60,15 @@ export function formatHistoryEvent(
 
 /**
  * Shared cross-MCP price-history enum (issue #48 / realty-mcp#1).
- * Re-exported from the cohort helper package — the canonical union adds
+ * Derived from the cohort helper package's canonical union, which adds
  * an `'Unknown'` sentinel for input it can't classify. compass drops
  * `'Unknown'` events rather than surfacing them (see `normalizeEventType`
  * + `buildEventsNormalized`), so `NormalizedEvent.type` only ever carries
- * the recognized members.
+ * the recognized members — we `Exclude` `'Unknown'` here so the exported
+ * type matches that runtime contract and callers exhaustive-switching on
+ * `NormalizedEvent.type` aren't forced to handle an unreachable branch.
  */
-export type NormalizedEventType = CoreEventType;
+export type NormalizedEventType = Exclude<CoreEventType, 'Unknown'>;
 
 export interface NormalizedEvent {
   date: string;
