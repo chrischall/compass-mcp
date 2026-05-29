@@ -4,6 +4,7 @@ import type { CompassClient } from '../client.js';
 import { textResult } from '../mcp.js';
 import { extractInitialData } from '../page-state.js';
 import { extractAgentSlug, extractPidFromUrl, urlToPath } from '../url.js';
+import { compassListingUrl } from './by-address.js';
 import { loadCommunities } from '../features.js';
 import {
   OMNISUGGEST_AUTOCOMPLETE_PATH,
@@ -484,28 +485,22 @@ export interface FormatOptions {
 
 /**
  * Compose the Sheets-paste-ready `=HYPERLINK(...)` formula for a
- * Compass listing. Prefers the stable `_pid/` form when a pid is
- * available; falls back to `_lid/`. Always returns a valid formula
- * string — callers shouldn't have to special-case the cell.
+ * Compass listing. Prefers the stable `_pid/` form (the
+ * `navigationPageLink`) when present; falls back to the slugged
+ * `pageLink` and then the slug-less `_lid/` form. Always returns a valid
+ * formula string — callers shouldn't have to special-case the cell.
  * (Issue #43.)
  *
- * The target-URL selection (pid vs lid) is compass-specific and stays
- * here; the formula assembly delegates to the cohort
+ * The target-URL selection is the compass-specific `compassListingUrl`
+ * ladder (by-address.ts); the formula assembly delegates to the cohort
  * `buildHyperlinkFormula` (realty-mcp#1) with the `"Compass"` label.
  */
 export function buildPortalUrlHyperlink(args: {
-  pid?: string;
   navigationPageLink?: string;
   pageLink?: string;
   listingIdSHA?: string;
 }): string {
-  const pidUrl = args.navigationPageLink
-    ? `https://www.compass.com${args.navigationPageLink}`
-    : undefined;
-  const lidUrl = args.pageLink
-    ? `https://www.compass.com${args.pageLink}`
-    : `https://www.compass.com/homedetails/${args.listingIdSHA ?? ''}_lid/`;
-  const target = args.pid ? (pidUrl ?? lidUrl) : lidUrl;
+  const target = compassListingUrl(args, { prefer: 'pid' });
   return buildHyperlinkFormula(target, 'Compass');
 }
 
@@ -589,17 +584,10 @@ export function format(
   // That last form 410s on compass.com, but a listing record that arrives
   // with neither `pageLink` nor `navigationPageLink` leaves nothing else
   // derivable without an extra search lookup — so it's a benign fallback,
-  // not a fabricated scheme. Mirrors `buildListingUrl` in by-address.ts.
-  let url: string;
-  if (listing.pageLink) {
-    url = listing.pageLink.startsWith('http')
-      ? listing.pageLink
-      : `https://www.compass.com${listing.pageLink}`;
-  } else if (listing.navigationPageLink) {
-    url = `https://www.compass.com${listing.navigationPageLink}`;
-  } else {
-    url = `https://www.compass.com/homedetails/${listing.listingIdSHA ?? ''}_lid/`;
-  }
+  // not a fabricated scheme. The single URL ladder lives in
+  // `compassListingUrl` (by-address.ts); this is the `pageLink`-first
+  // (read-the-record) preference.
+  const url = compassListingUrl(listing, { prefer: 'pageLink' });
   const propertyUrl = listing.navigationPageLink
     ? `https://www.compass.com${listing.navigationPageLink}`
     : undefined;
@@ -614,7 +602,6 @@ export function format(
   // Derived fields (issues #36–#38, #43, #44). Each helper is pure and
   // unit-tested; the return shape below stays declarative.
   const portalUrlHyperlink = buildPortalUrlHyperlink({
-    pid,
     navigationPageLink: listing.navigationPageLink,
     pageLink: listing.pageLink,
     listingIdSHA: listing.listingIdSHA,

@@ -3,7 +3,8 @@ import type { CompassClient } from '../../src/client.js';
 import {
   addressMatchesQuery,
   buildAddressQuery,
-  extractPidFromNavigationPageLink,
+  buildListingUrl,
+  compassListingUrl,
   normalizeAddressForMatch,
   registerByAddressTools,
 } from '../../src/tools/by-address.js';
@@ -165,25 +166,46 @@ describe('addressMatchesQuery', () => {
   });
 });
 
-describe('extractPidFromNavigationPageLink', () => {
-  it('pulls the pid out of /listing/<slug>/<pid>_pid/', () => {
-    expect(
-      extractPidFromNavigationPageLink('/listing/126-Sleeping-Bear-Ln/WNQQ8_pid/')
-    ).toBe('WNQQ8');
+describe('compassListingUrl (deduped URL ladder)', () => {
+  const listing = {
+    listingIdSHA: 'abc',
+    pageLink: '/homedetails/foo/abc_lid/',
+    navigationPageLink: '/listing/foo/WNQQ8_pid/',
+  };
+
+  it('default prefers the stable _pid/ navigationPageLink (issue #27)', () => {
+    expect(compassListingUrl(listing)).toBe(
+      'https://www.compass.com/listing/foo/WNQQ8_pid/'
+    );
+    // buildListingUrl is a thin alias of the pid-preferring ladder.
+    expect(buildListingUrl(listing)).toBe(compassListingUrl(listing));
   });
 
-  it('pulls the pid out of /homedetails/<slug>/<pid>_pid/', () => {
-    expect(
-      extractPidFromNavigationPageLink('/homedetails/foo/203T5X_pid/')
-    ).toBe('203T5X');
+  it("prefer:'pageLink' prefers the slugged _lid/ pageLink (issue #15)", () => {
+    expect(compassListingUrl(listing, { prefer: 'pageLink' })).toBe(
+      'https://www.compass.com/homedetails/foo/abc_lid/'
+    );
   });
 
-  it('returns undefined when the path is not a _pid/ form', () => {
+  it('falls back to pageLink when navigationPageLink is absent (pid preference)', () => {
     expect(
-      extractPidFromNavigationPageLink('/homedetails/foo/abc_lid/')
-    ).toBeUndefined();
-    expect(extractPidFromNavigationPageLink(undefined)).toBeUndefined();
-    expect(extractPidFromNavigationPageLink('')).toBeUndefined();
+      compassListingUrl({ listingIdSHA: 'abc', pageLink: '/homedetails/foo/abc_lid/' })
+    ).toBe('https://www.compass.com/homedetails/foo/abc_lid/');
+  });
+
+  it('falls back to the slug-less _lid/ form when no links are present', () => {
+    expect(compassListingUrl({ listingIdSHA: 'abc' })).toBe(
+      'https://www.compass.com/homedetails/abc_lid/'
+    );
+  });
+
+  it('passes an already-absolute link through unchanged', () => {
+    expect(
+      compassListingUrl(
+        { pageLink: 'https://www.compass.com/homedetails/foo/abc_lid/' },
+        { prefer: 'pageLink' }
+      )
+    ).toBe('https://www.compass.com/homedetails/foo/abc_lid/');
   });
 });
 

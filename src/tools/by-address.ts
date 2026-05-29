@@ -191,13 +191,6 @@ export function addressMatchesQuery(
   return true;
 }
 
-/**
- * Re-export of `extractPidFromUrl` under its original tool-local name
- * for back-compat with callers that imported it from this module before
- * it was promoted to `src/url.ts`.
- */
-export { extractPidFromUrl as extractPidFromNavigationPageLink } from '../url.js';
-
 /** Which rung produced a successful resolution. */
 export type MatchedVia = 'typeahead' | 'freetext' | 'search_fallback';
 
@@ -452,18 +445,52 @@ export async function resolveOneAddress(
   return { resolved: false, error: 'no listing matched the address' };
 }
 
+const COMPASS_ORIGIN = 'https://www.compass.com';
+
+/** Absolute-ize a Compass relative link (no-op if already absolute). */
+function absoluteCompassUrl(link: string): string {
+  return /^https?:/i.test(link) ? link : `${COMPASS_ORIGIN}${link}`;
+}
+
+/**
+ * Build a Compass listing's absolute URL from whatever link fields the
+ * listing carries. The single canonical URL ladder — every call site
+ * (the `format()` `url` block, `buildPortalUrlHyperlink`, and
+ * `buildListingUrl`) routes through this so the `_pid`/`_lid`/slug-less
+ * fallback logic lives in exactly one place. Kept local because the
+ * `_pid/` ↔ `_lid/` URL scheme is compass-specific.
+ *
+ * Two preference orders, both ending in the slug-less `/homedetails/
+ * <sha>_lid/` last resort:
+ *
+ *   - `prefer: 'pid'` (default): the stable `_pid/` `navigationPageLink`
+ *     first, then the slugged `pageLink` (issue #27 — sha URLs go stale
+ *     on relisting, so stable references want the pid form).
+ *   - `prefer: 'pageLink'`: the slugged `pageLink` (`_lid/`) first, then
+ *     the `_pid/` `navigationPageLink` — the form `compass_get_property`
+ *     returns as `url`, the right shape for *reading* the current
+ *     listing record (issue #15).
+ */
+export function compassListingUrl(
+  listing: RawListingLike,
+  opts: { prefer?: 'pid' | 'pageLink' } = {}
+): string {
+  const ladder =
+    opts.prefer === 'pageLink'
+      ? [listing.pageLink, listing.navigationPageLink]
+      : [listing.navigationPageLink, listing.pageLink];
+  for (const link of ladder) {
+    if (link) return absoluteCompassUrl(link);
+  }
+  return `${COMPASS_ORIGIN}/homedetails/${listing.listingIdSHA ?? ''}_lid/`;
+}
+
 /**
  * Translate a resolved listing into the canonical URL form. Prefers the
  * stable `_pid/` URL (issue #27) when present.
  */
 export function buildListingUrl(listing: RawListingLike): string {
-  if (listing.navigationPageLink) {
-    return `https://www.compass.com${listing.navigationPageLink}`;
-  }
-  if (listing.pageLink) {
-    return `https://www.compass.com${listing.pageLink}`;
-  }
-  return `https://www.compass.com/homedetails/${listing.listingIdSHA}_lid/`;
+  return compassListingUrl(listing, { prefer: 'pid' });
 }
 
 export function registerByAddressTools(

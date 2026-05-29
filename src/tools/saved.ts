@@ -1,6 +1,5 @@
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import type { CompassClient } from '../client.js';
-import { textResult } from '../mcp.js';
 
 /**
  * Compass account surfaces (favorites + saved searches) are a known
@@ -70,7 +69,3 @@ export function registerSavedTools(
     }
   );
 }
-
-// Marker to keep `textResult` import for forward-compat when we wire
-// the tools properly.
-export const __reservedForLater = textResult;
