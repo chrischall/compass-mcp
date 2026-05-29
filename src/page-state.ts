@@ -112,3 +112,19 @@ export function extractUc(html: string): Record<string, unknown> | null {
 export function extractInitialData(html: string): Record<string, unknown> | null {
   return extractGlobalAssign(html, '__INITIAL_DATA__');
 }
+
+/**
+ * Extract `__AGENT_PROFILE__` from a Compass agent profile page
+ * (`/agents/<slug>/`). Unlike the search / homedetails routes (which use
+ * `uc` and `__INITIAL_DATA__`), agent profile pages embed their SSR state
+ * as a `window.__AGENT_PROFILE__ = {…}` blob (~1.4MB) with no
+ * `__NEXT_DATA__`. The useful payload lives at
+ * `data.agentProfileProps.activeListingsProps.initialSales` (active
+ * listings) and `data.agentProfileProps.closedDealsProps.initialSales`
+ * (closed deals). (Issue #52.)
+ */
+export function extractAgentProfile(
+  html: string
+): Record<string, unknown> | null {
+  return extractGlobalAssign(html, '__AGENT_PROFILE__');
+}

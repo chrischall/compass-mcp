@@ -13,6 +13,7 @@ import { registerAffordabilityTools } from '../src/tools/affordability.js';
 import { registerPhotosTools } from '../src/tools/photos.js';
 import { registerHealthcheckTools } from '../src/tools/healthcheck.js';
 import { registerByAddressTools } from '../src/tools/by-address.js';
+import { registerAgentListingsTools } from '../src/tools/agent-listings.js';
 import { createTestHarness } from './helpers.js';
 
 const mockClient = {
@@ -32,6 +33,7 @@ const EXPECTED_TOOLS = [
   'compass_calculate_affordability',
   'compass_healthcheck',
   'compass_get_by_address',
+  'compass_get_agent_listings',
 ];
 
 let harness: Awaited<ReturnType<typeof createTestHarness>>;
@@ -52,6 +54,7 @@ describe('tool registration', () => {
       registerPhotosTools(server, mockClient);
       registerHealthcheckTools(server, mockClient);
       registerByAddressTools(server, mockClient);
+      registerAgentListingsTools(server, mockClient);
     });
     const tools = await harness.listTools();
     const names = tools.map((t) => t.name).sort();

@@ -1,5 +1,11 @@
 import { describe, it, expect } from 'vitest';
-import { extractPidFromUrl, locationToSlug, urlToPath } from '../src/url.js';
+import {
+  agentProfilePath,
+  extractAgentSlug,
+  extractPidFromUrl,
+  locationToSlug,
+  urlToPath,
+} from '../src/url.js';
 
 describe('urlToPath', () => {
   it('preserves a bare leading-slash path', () => {
@@ -43,6 +49,84 @@ describe('extractPidFromUrl', () => {
   it('returns undefined for undefined/empty input', () => {
     expect(extractPidFromUrl(undefined)).toBeUndefined();
     expect(extractPidFromUrl('')).toBeUndefined();
+  });
+});
+
+describe('extractAgentSlug (#52)', () => {
+  it('returns a bare slug unchanged', () => {
+    expect(extractAgentSlug('paige-mcguirk')).toBe('paige-mcguirk');
+  });
+
+  it('pulls the slug out of a full agent profile URL', () => {
+    expect(extractAgentSlug('https://www.compass.com/agents/paige-mcguirk/')).toBe(
+      'paige-mcguirk'
+    );
+  });
+
+  it('pulls the slug out of an /agents/<slug>/ path (with or without trailing slash)', () => {
+    expect(extractAgentSlug('/agents/paige-mcguirk/')).toBe('paige-mcguirk');
+    expect(extractAgentSlug('/agents/paige-mcguirk')).toBe('paige-mcguirk');
+  });
+
+  it('ignores query strings and fragments on a profile URL', () => {
+    expect(
+      extractAgentSlug('https://www.compass.com/agents/paige-mcguirk/?foo=1#bar')
+    ).toBe('paige-mcguirk');
+  });
+
+  it('trims surrounding whitespace', () => {
+    expect(extractAgentSlug('  paige-mcguirk  ')).toBe('paige-mcguirk');
+  });
+
+  it('throws on empty / missing input', () => {
+    expect(() => extractAgentSlug('')).toThrow(/slug/i);
+    expect(() => extractAgentSlug('   ')).toThrow(/slug/i);
+  });
+
+  it('throws when a compass URL is not an /agents/ profile URL', () => {
+    expect(() =>
+      extractAgentSlug('https://www.compass.com/homedetails/foo/abc_lid/')
+    ).toThrow(/agents/);
+  });
+
+  it('lowercases a mixed-case bare slug', () => {
+    expect(extractAgentSlug('Paige-McGuirk')).toBe('paige-mcguirk');
+  });
+
+  it('lowercases a slug pulled from a URL', () => {
+    expect(
+      extractAgentSlug('https://www.compass.com/agents/Paige-McGuirk/')
+    ).toBe('paige-mcguirk');
+  });
+
+  it('rejects a bare slug with illegal characters', () => {
+    expect(() => extractAgentSlug('foo bar')).toThrow(/slug/i);
+    expect(() => extractAgentSlug('..')).toThrow(/slug/i);
+    expect(() => extractAgentSlug('foo/bar/baz')).toThrow(/agents/i);
+    expect(() => extractAgentSlug('paige_mcguirk')).toThrow(/slug/i);
+    expect(() => extractAgentSlug('paige.mcguirk')).toThrow(/slug/i);
+  });
+
+  it('rejects a malformed slug pulled from an /agents/<slug>/ URL/path', () => {
+    expect(() =>
+      extractAgentSlug('https://www.compass.com/agents/foo bar/')
+    ).toThrow(/slug/i);
+    expect(() => extractAgentSlug('/agents/..%2f/')).toThrow(/slug/i);
+    // A malformed percent-encoding must surface the clear slug error, not a
+    // raw URIError from decodeURIComponent.
+    expect(() => extractAgentSlug('/agents/%ZZ/')).toThrow(/slug/i);
+  });
+});
+
+describe('agentProfilePath (#52)', () => {
+  it('builds the /agents/<slug>/ path from a slug', () => {
+    expect(agentProfilePath('paige-mcguirk')).toBe('/agents/paige-mcguirk/');
+  });
+
+  it('accepts a full profile URL and reduces it to the path', () => {
+    expect(
+      agentProfilePath('https://www.compass.com/agents/paige-mcguirk/')
+    ).toBe('/agents/paige-mcguirk/');
   });
 });
 
