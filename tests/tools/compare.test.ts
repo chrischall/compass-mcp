@@ -117,25 +117,9 @@ describe('compass_compare_properties tool', () => {
 
   it('resolves sha-only targets internally and returns them alongside url targets', async () => {
     // Mixed batch: url-shaped target fetches normally; sha-only target
-    // first hits the WAF-immune omnisuggest typeahead to recover the
-    // redirect path, then fetches the listing record. Both succeed
-    // without the caller having to know the slug.
-    mockFetchJson.mockResolvedValue({
-      categories: [
-        {
-          name: 1,
-          label: 'Addresses',
-          items: [
-            {
-              text: '155 Quail Cove Blvd',
-              id: '2079240952806311449',
-              redirectUrl: '/listing/2079240952806311449/view',
-            },
-          ],
-        },
-      ],
-      success: true,
-    });
+    // maps to `/listing/<sha>/view` (no omnisuggest call) and is fetched
+    // directly — the bridge follows the 302 to the homedetails record.
+    // Both succeed without the caller having to know the slug.
     mockFetchHtml.mockImplementation(async (path: string) => {
       return htmlWith({
         listingIdSHA: path.includes('good') ? 'good' : '2079240952806311449',
@@ -153,6 +137,11 @@ describe('compass_compare_properties tool', () => {
       ],
     });
     expect(r.isError).toBeFalsy();
+    // The sha target is fetched via its listing-view path; no omnisuggest.
+    expect(mockFetchJson).not.toHaveBeenCalled();
+    expect(mockFetchHtml.mock.calls.map((c) => c[0])).toContain(
+      '/listing/2079240952806311449/view'
+    );
     const parsed = parseToolResult<{
       results: Array<{ error?: string; property?: { price?: number } }>;
     }>(r);

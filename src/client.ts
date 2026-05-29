@@ -10,9 +10,12 @@
 // So the client surface is small: `fetchHtml` for those SSR pages, plus
 // `fetchJson` — which IS in active use for the one structured endpoint
 // Compass does expose to the browser, the omnisuggest address
-// autocomplete (`/api/v3/omnisuggest/autocomplete`) that powers address
-// + sha resolution (issues #78/#79). Both ride through fetchproxy so the
-// user's signed-in compass.com session does the actual HTTP.
+// autocomplete (`/api/v3/omnisuggest/autocomplete`) that powers the
+// by-address resolver (issues #78/#79). (sha-only resolution does NOT use
+// this endpoint — a bare sha maps straight to `/listing/<sha>/view`,
+// fetched via `fetchHtml`, which follows the 302 to homedetails.) Both
+// ride through fetchproxy so the user's signed-in compass.com session
+// does the actual HTTP.
 //
 // Error mapping (non-2xx, sign-in interstitial, empty 204 body) lives
 // here so tool authors never have to think about it.
@@ -154,11 +157,11 @@ export class CompassClient {
   /**
    * POST/PUT/DELETE a JSON body, return the parsed JSON. Throws on
    * non-2xx, invalid JSON, or sign-in page. This is the PRIMARY resolver
-   * path: the address resolver (`compass_get_by_address` /
-   * `compass_resolve_addresses`) and sha resolution
-   * (`resolvePathFromSha`, used by get_property / photos / history /
-   * compare / bulk_get) both POST to the WAF-immune omnisuggest
-   * autocomplete endpoint through here (issues #78/#79). Also kept ready
+   * path for the address resolver (`compass_get_by_address` /
+   * `compass_resolve_addresses`), which POSTs to the WAF-immune omnisuggest
+   * autocomplete endpoint through here (issues #78/#79). (sha resolution
+   * does NOT come through here — `resolvePathFromSha` maps a bare sha to
+   * `/listing/<sha>/view` and fetches it via `fetchHtml`.) Also kept ready
    * for any future Compass JSON API (saved-listings or similar).
    *
    * The serialization / header-defaults / 204-handling / JSON.parse all
