@@ -5,12 +5,10 @@ import { textResult } from '../mcp.js';
 import { extractInitialData, extractUc } from '../page-state.js';
 import { extractPidFromUrl, urlToPath } from '../url.js';
 import { findLolResults } from './search.js';
+import { loadCommunities } from '../features.js';
 import {
   extractFeatures,
-  loadCommunities,
   type ExtractedFeatures,
-} from '../features.js';
-import {
   hoaToMonthlyUsd,
   sqftToAcres,
   cleanTaxAnnual,
