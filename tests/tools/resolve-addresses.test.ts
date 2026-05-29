@@ -137,10 +137,26 @@ describe('compass_resolve_addresses tool', () => {
   });
 
   it('captures per-row errors without failing the whole call', async () => {
-    let n = 0;
-    mockFetchHtml.mockImplementation(async () => {
-      n++;
-      if (n === 2) throw new Error('upstream fault');
+    // Per-row isolation: a transport fault on ONE address must surface
+    // on that row only (as a retryable #85 status) while the others
+    // resolve. Keyed on the address so it's deterministic under the
+    // concurrent fan-out (not call-order dependent). A generic SSR
+    // content error is no longer a per-row error — it falls through to
+    // the high-recall slug rung (#86) — so we inject a transport fault,
+    // which is the error class that legitimately surfaces per-row.
+    mockFetchHtml.mockImplementation(async (path: string) => {
+      const m = /q=([^&]+)/.exec(path);
+      const q = m ? decodeURIComponent(m[1]) : '';
+      if (q.includes('2 Main')) {
+        throw new FetchproxyTimeoutError({
+          url: 'https://www.compass.com/homes-for-sale/?q=...',
+          timeoutMs: 25,
+          elapsedMs: 28,
+          role: 'peer',
+          port: 37200,
+        });
+      }
+      const n = q.includes('1 Main') ? 1 : 3;
       return searchHtml([
         {
           listing: {
@@ -159,11 +175,11 @@ describe('compass_resolve_addresses tool', () => {
       ],
     });
     const parsed = parseToolResult<{
-      rows: Array<{ resolved: boolean; error?: string }>;
+      rows: Array<{ resolved: boolean; status?: string; error?: string }>;
     }>(r);
     expect(parsed.rows[0].resolved).toBe(true);
     expect(parsed.rows[1].resolved).toBe(false);
-    expect(parsed.rows[1].error).toMatch(/upstream fault/);
+    expect(parsed.rows[1].status).toBe('timeout');
     expect(parsed.rows[2].resolved).toBe(true);
   });
 
@@ -612,6 +628,41 @@ describe('compass_resolve_addresses tool', () => {
       } finally {
         await singleHarness.close();
       }
+    });
+
+    // Issue #86 (P1-2): the high-recall slug search rung must stay
+    // reachable in BULK when the WAF-walled free-text ?q= rung throws.
+    it('CRITICAL #86: bulk reaches the slug search rung when ?q= 403s', async () => {
+      // typeahead empty (default), ?q= throws (WAF), slug search matches.
+      mockFetchHtml.mockImplementation(async (path: string) => {
+        if (path.startsWith('/homes-for-sale/?q=')) {
+          throw new Error('Compass API error: 403 for GET /homes-for-sale/?q=...');
+        }
+        return searchHtml([
+          {
+            listing: {
+              listingIdSHA: 'sha-bulk-recall',
+              pageLink: '/homedetails/126-sleeping-bear-ln/sha-bulk-recall_lid/',
+              subtitles: ['126 Sleeping Bear Ln', 'Lake Lure, NC 28746'],
+            },
+          },
+        ]);
+      });
+      const r = await harness.callTool('compass_resolve_addresses', {
+        addresses: [
+          { address: '126 Sleeping Bear Ln', city: 'Lake Lure', state: 'NC' },
+        ],
+      });
+      const parsed = parseToolResult<{
+        rows: Array<{
+          resolved: boolean;
+          matched_via?: string;
+          listing_id_sha?: string;
+        }>;
+      }>(r);
+      expect(parsed.rows[0].resolved).toBe(true);
+      expect(parsed.rows[0].matched_via).toBe('search_fallback');
+      expect(parsed.rows[0].listing_id_sha).toBe('sha-bulk-recall');
     });
   });
 

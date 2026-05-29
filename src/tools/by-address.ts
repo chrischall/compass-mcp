@@ -300,6 +300,36 @@ async function fetchListings(
 }
 
 /**
+ * `fetchListings` that tolerates a *content* failure on an SSR rung
+ * (issue #86). compass.com runs AWS WAF; the free-text `?q=` SSR path
+ * 403s the bridge (and `client.fetchHtml` raises a 403 / sign-in
+ * interstitial error). That must NOT abort the resolve — the
+ * search-backed slug rung has far better recall and has to stay
+ * reachable. So a content failure here degrades to an empty candidate
+ * list (fall through), while a TRANSPORT fault (timeout / bridge-down,
+ * #85) is re-thrown so it can be classified as a retryable status
+ * rather than masked as "this rung found nothing".
+ */
+async function fetchListingsTolerant(
+  client: CompassClient,
+  path: string
+): Promise<Array<{ listing?: RawListingLike }>> {
+  try {
+    return await fetchListings(client, path);
+  } catch (e) {
+    if (
+      e instanceof FetchproxyTimeoutError ||
+      e instanceof FetchproxyBridgeDownError
+    ) {
+      throw e;
+    }
+    // WAF 403 / sign-in interstitial / HTTP error / parse fault — treat
+    // as "this rung surfaced nothing" and fall through to the next rung.
+    return [];
+  }
+}
+
+/**
  * Run the structured typeahead rung (issue #78/#79). POSTs the address
  * to Compass's omnisuggest autocomplete endpoint and shapes each
  * Addresses candidate into a `RawListingLike` so the shared
@@ -389,23 +419,30 @@ export async function resolveOneAddress(
     }
   }
 
-  // Rung 1: free-text ?q= search.
+  // Rung 1: free-text ?q= search. WAF-walled in production (403) — a
+  // content failure here must fall through to the high-recall slug rung
+  // (#86), not abort the resolve. `fetchListingsTolerant` swallows the
+  // WAF 403 / sign-in error but still propagates a transport timeout
+  // (#85).
   const query = buildAddressQuery(input);
   const freetextPath = `/homes-for-sale/?q=${encodeURIComponent(query)}`;
-  const freetextEntries = await fetchListings(client, freetextPath);
+  const freetextEntries = await fetchListingsTolerant(client, freetextPath);
   const freetextMatch = findMatchingListing(freetextEntries, input);
   if (freetextMatch) {
     return { resolved: true, listing: freetextMatch, matched_via: 'freetext' };
   }
 
-  // Rung 2: slug-based search anchored on locality (#71).
+  // Rung 2: slug-based search anchored on locality (#71). This is the
+  // first-class, high-recall search rung (#86) — it must run even when
+  // the free-text rung above 403s. Tolerant of per-page content faults
+  // for the same reason; transport faults still propagate (#85).
   const slugBasePath = buildFallbackSlugPath(input);
   if (slugBasePath) {
     for (let page = 1; page <= BY_ADDRESS_FALLBACK_MAX_PAGES; page += 1) {
       // page=1 is canonical at the bare path (Compass redirects /page-1/).
       const path =
         page === 1 ? slugBasePath : `${slugBasePath}page-${page}/`;
-      const entries = await fetchListings(client, path);
+      const entries = await fetchListingsTolerant(client, path);
       const matched = findMatchingListing(entries, input);
       if (matched) {
         return {
