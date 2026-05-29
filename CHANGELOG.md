@@ -1,5 +1,25 @@
 # Changelog
 
+## [0.10.0](https://github.com/chrischall/compass-mcp/compare/v0.9.0...v0.10.0) (2026-05-29)
+
+
+### Features
+
+* adopt @chrischall/realty-core 0.4.0 (marina place-name guard + restore completed→Sold) ([#84](https://github.com/chrischall/compass-mcp/issues/84)) ([00fff90](https://github.com/chrischall/compass-mcp/commit/00fff90a331a35af7f70a9f78aab2d24b5d4cf1e))
+* adopt @fetchproxy/server 0.10.0 — requestJson + keepAlive default ([#82](https://github.com/chrischall/compass-mcp/issues/82)) ([8bc5a6b](https://github.com/chrischall/compass-mcp/commit/8bc5a6b5bb7981573463730c78ed5e08d66d13b0))
+* consume @chrischall/realty-core 0.3.1 — drop inline hoisted helpers ([#83](https://github.com/chrischall/compass-mcp/issues/83)) ([503f932](https://github.com/chrischall/compass-mcp/commit/503f932aa86f51a1f22c1910885e796189727162))
+* **properties:** add derived lot_size_acres ([#82](https://github.com/chrischall/compass-mcp/issues/82)) ([#81](https://github.com/chrischall/compass-mcp/issues/81)) ([c8ff30b](https://github.com/chrischall/compass-mcp/commit/c8ff30b3da4dc786088c792ce0c42959af7bf870))
+
+
+### Bug Fixes
+
+* **by-address:** resolve via structured omnisuggest typeahead to fix WAF false-negatives ([#80](https://github.com/chrischall/compass-mcp/issues/80)) ([3272487](https://github.com/chrischall/compass-mcp/commit/327248734fffb8aad275ad96012b61d2465b7a26))
+
+
+### Refactor
+
+* **transport:** read fetchTimeoutMs from bridgeHealth() instead of local DEFAULT — closes drift gap per fetchproxy[#82](https://github.com/chrischall/compass-mcp/issues/82) ([#76](https://github.com/chrischall/compass-mcp/issues/76)) ([6be753c](https://github.com/chrischall/compass-mcp/commit/6be753c5f2f86aefca1621010706d991e75713fb))
+
 ## [0.9.0](https://github.com/chrischall/compass-mcp/compare/v0.8.0...v0.9.0) (2026-05-28)
 
 
