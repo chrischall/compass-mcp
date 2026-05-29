@@ -620,7 +620,7 @@ describe('compass_get_property tool', () => {
       expect(parsed.hoa_monthly_usd).toBeNull();
     });
 
-    it('tax_annual nulls out the 0/1 not-yet-assessed sentinel (#38)', async () => {
+    it('tax_annual nulls out the 0/1 not-yet-assessed sentinel + flags tax_status (#38)', async () => {
       mockFetchHtml.mockResolvedValueOnce(
         htmlWith({
           listingIdSHA: 'a',
@@ -629,11 +629,35 @@ describe('compass_get_property tool', () => {
         })
       );
       const r = await harness.callTool('compass_get_property', { url: '/x/a_lid/' });
-      const parsed = parseToolResult<{ tax_annual?: number | null }>(r);
+      const parsed = parseToolResult<{
+        tax_annual?: number | null;
+        tax_status?: string | null;
+      }>(r);
       expect(parsed.tax_annual).toBeNull();
+      expect(parsed.tax_status).toBe('not_yet_assessed');
     });
 
-    it('tax_annual passes through normal values (#38)', async () => {
+    it('tax_annual nulls a 2–9 figure as not_yet_assessed (canonical < 10 sentinel, realty-mcp#1)', async () => {
+      // Behavior delta adopted from cohort `cleanTaxAnnual`: the old
+      // inline `sanitizeTaxAnnual` only nulled `<= 1`, so a tax of 5
+      // passed through. The canonical sentinel threshold is `< 10`.
+      mockFetchHtml.mockResolvedValueOnce(
+        htmlWith({
+          listingIdSHA: 'a',
+          pageLink: '/x/a_lid/',
+          detailedInfo: { taxAnnualAmount: 5 },
+        })
+      );
+      const r = await harness.callTool('compass_get_property', { url: '/x/a_lid/' });
+      const parsed = parseToolResult<{
+        tax_annual?: number | null;
+        tax_status?: string | null;
+      }>(r);
+      expect(parsed.tax_annual).toBeNull();
+      expect(parsed.tax_status).toBe('not_yet_assessed');
+    });
+
+    it('tax_annual passes through normal values with a null tax_status (#38)', async () => {
       mockFetchHtml.mockResolvedValueOnce(
         htmlWith({
           listingIdSHA: 'a',
@@ -642,8 +666,12 @@ describe('compass_get_property tool', () => {
         })
       );
       const r = await harness.callTool('compass_get_property', { url: '/x/a_lid/' });
-      const parsed = parseToolResult<{ tax_annual?: number | null }>(r);
+      const parsed = parseToolResult<{
+        tax_annual?: number | null;
+        tax_status?: string | null;
+      }>(r);
       expect(parsed.tax_annual).toBe(8200);
+      expect(parsed.tax_status).toBeNull();
     });
 
     it('days_on_market derived from the earliest Listed event (#37)', async () => {
@@ -697,6 +725,31 @@ describe('compass_get_property tool', () => {
           listingIdSHA: 'a',
           pageLink: '/x/a_lid/',
           price: { lastKnown: 480000 },
+        })
+      );
+      const r = await harness.callTool('compass_get_property', { url: '/x/a_lid/' });
+      const parsed = parseToolResult<{
+        price_drop_amount?: number | null;
+        price_drop_percent?: number | null;
+      }>(r);
+      expect(parsed.price_drop_amount).toBeNull();
+      expect(parsed.price_drop_percent).toBeNull();
+    });
+
+    it('price_drop_* are null on a price RISE, not a negative drop (canonical priceDrop, realty-mcp#1)', async () => {
+      // Behavior delta adopted from cohort `priceDrop(previous, current)`:
+      // the old inline gated only on `previous !== current`, so a price
+      // rise produced a negative `price_drop_amount`. The canonical helper
+      // returns null when the price didn't actually fall — correct for a
+      // field named `price_drop_*`.
+      mockFetchHtml.mockResolvedValueOnce(
+        htmlWith({
+          listingIdSHA: 'a',
+          pageLink: '/x/a_lid/',
+          price: { lastKnown: 520000 },
+          events: [
+            { timestamp: 1000, status: 1, price: 500000, localizedStatus: 'Listed' },
+          ],
         })
       );
       const r = await harness.callTool('compass_get_property', { url: '/x/a_lid/' });

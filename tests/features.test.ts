@@ -84,6 +84,25 @@ describe('extractFeatures', () => {
     it('returns null when basement is not mentioned', () => {
       expect(extractFeatures('Three-car garage', baseCommunities).basement).toBeNull();
     });
+    it('does NOT false-positive to "finished" on "basement with finished oak shelving" (canonical connector pin)', () => {
+      // BEHAVIOR DELTA: the old inline copy used a loose
+      // `basement[^.!?]{0,30}?finished` window that matched the
+      // free-floating "with finished", mislabeling the basement
+      // `'finished'` when only the shelving is finished. The canonical
+      // realty-core detector uses a tight BASEMENT_CONNECTOR conjunct
+      // class that rejects "with", so this resolves to `'unknown'`
+      // (basement mentioned, no recognized finish state).
+      const out = extractFeatures(
+        'Basement with finished oak shelving.',
+        baseCommunities
+      );
+      expect(out.basement).toBe('unknown');
+    });
+    it('still recognizes verb-attached finish state ("basement is finished")', () => {
+      expect(
+        extractFeatures('The basement is finished', baseCommunities).basement
+      ).toBe('finished');
+    });
   });
 
   describe('furnished', () => {

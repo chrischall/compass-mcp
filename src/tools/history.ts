@@ -7,6 +7,10 @@ import {
   fetchListingRecord,
   type RawListingHistoryEvent,
 } from './properties.js';
+import {
+  mapEventType,
+  type NormalizedEventType as CoreEventType,
+} from '@chrischall/realty-core';
 
 /**
  * Compass embeds price history as two arrays on the listing record:
@@ -55,19 +59,16 @@ export function formatHistoryEvent(
 }
 
 /**
- * Shared cross-MCP price-history enum (issue #48). Each sister
- * real-estate MCP exposes its own price-history schema; this enum is
- * the union that callers can rely on regardless of upstream provider.
+ * Shared cross-MCP price-history enum (issue #48 / realty-mcp#1).
+ * Derived from the cohort helper package's canonical union, which adds
+ * an `'Unknown'` sentinel for input it can't classify. compass drops
+ * `'Unknown'` events rather than surfacing them (see `normalizeEventType`
+ * + `buildEventsNormalized`), so `NormalizedEvent.type` only ever carries
+ * the recognized members — we `Exclude` `'Unknown'` here so the exported
+ * type matches that runtime contract and callers exhaustive-switching on
+ * `NormalizedEvent.type` aren't forced to handle an unreachable branch.
  */
-export type NormalizedEventType =
-  | 'Listed'
-  | 'PriceChange'
-  | 'Pending'
-  | 'Contingent'
-  | 'Sold'
-  | 'Withdrawn'
-  | 'Relisted'
-  | 'Delisted';
+export type NormalizedEventType = Exclude<CoreEventType, 'Unknown'>;
 
 export interface NormalizedEvent {
   date: string;
@@ -82,23 +83,22 @@ export interface NormalizedEvent {
  * Map a Compass `localizedStatus` (e.g. "Listed", "Price Change",
  * "Sold", "Off Market") to a shared cross-MCP type. Returns undefined
  * for shapes we don't recognize — we drop those rather than guess.
+ *
+ * Thin adapter over the cohort `mapEventType` (realty-mcp#1): the
+ * canonical mapper returns `'Unknown'` for unrecognized input where
+ * compass historically returned `undefined`, so we fold `'Unknown'`
+ * back to `undefined` to keep the drop-on-unknown contract callers rely
+ * on. Behavior deltas adopted from canonical: word-boundary `\bactive\b`
+ * (so "Inactive"/"Deactivated" no longer map to Listed) and `\bclosed\b`
+ * (so "Foreclosed" no longer maps to Sold); `cancel` now maps to
+ * `Withdrawn` (was `Delisted`), and the `temporar...`→Delisted synonym is
+ * dropped (no canonical equivalent).
  */
 export function normalizeEventType(
   localizedStatus: string | undefined
 ): NormalizedEventType | undefined {
-  if (!localizedStatus) return undefined;
-  const s = localizedStatus.toLowerCase().trim();
-  // Order matters where a value matches multiple regexes — list the
-  // more specific cases first.
-  if (/relist|re-?list/.test(s)) return 'Relisted';
-  if (/(^listed$|active|coming soon|new listing|for sale)/.test(s)) return 'Listed';
-  if (/price.?(change|decrease|increase|reduced|adjust)/.test(s)) return 'PriceChange';
-  if (/pending/.test(s)) return 'Pending';
-  if (/contingent/.test(s)) return 'Contingent';
-  if (/(^sold$|closed|completed)/.test(s)) return 'Sold';
-  if (/withdrawn/.test(s)) return 'Withdrawn';
-  if (/(delisted|off market|expired|cancel|temporar)/.test(s)) return 'Delisted';
-  return undefined;
+  const type = mapEventType(localizedStatus);
+  return type === 'Unknown' ? undefined : type;
 }
 
 /**

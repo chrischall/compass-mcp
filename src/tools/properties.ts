@@ -5,11 +5,18 @@ import { textResult } from '../mcp.js';
 import { extractInitialData, extractUc } from '../page-state.js';
 import { extractPidFromUrl, urlToPath } from '../url.js';
 import { findLolResults } from './search.js';
+import { loadCommunities } from '../features.js';
 import {
   extractFeatures,
-  loadCommunities,
   type ExtractedFeatures,
-} from '../features.js';
+  hoaToMonthlyUsd,
+  sqftToAcres,
+  cleanTaxAnnual,
+  daysSince,
+  priceDrop,
+  buildHyperlinkFormula,
+  collectAddressAlternates as collectAddressAlternatesCore,
+} from '@chrischall/realty-core';
 
 /**
  * Compass homedetails: GET /homedetails/<slug>/<listingIdSHA>_lid/
@@ -247,11 +254,18 @@ export interface FormattedProperty {
    */
   days_on_market?: number | null;
   /**
-   * Annual property tax. Nulled out for the 0/1 not-yet-assessed
-   * sentinel that Compass surfaces on some new-construction listings.
-   * (Issue #38.)
+   * Annual property tax. Nulled out for the not-yet-assessed sentinel
+   * (`< 10`) that Compass surfaces on some new-construction listings.
+   * (Issue #38 / realty-mcp#1.)
    */
   tax_annual?: number | null;
+  /**
+   * `'not_yet_assessed'` when `tax_annual` was nulled out as the
+   * new-construction placeholder, otherwise `null` (a real figure, or no
+   * tax figure at all). Surfaced from the cohort `cleanTaxAnnual`
+   * (realty-mcp#1) so callers can distinguish "placeholder" from "absent".
+   */
+  tax_status?: 'not_yet_assessed' | null;
   /**
    * HOA fee normalized to monthly USD, rounded to the nearest dollar.
    * `null` for unknown frequencies or when no fee is reported.
@@ -443,6 +457,10 @@ export interface FormatOptions {
  * available; falls back to `_lid/`. Always returns a valid formula
  * string — callers shouldn't have to special-case the cell.
  * (Issue #43.)
+ *
+ * The target-URL selection (pid vs lid) is compass-specific and stays
+ * here; the formula assembly delegates to the cohort
+ * `buildHyperlinkFormula` (realty-mcp#1) with the `"Compass"` label.
  */
 export function buildPortalUrlHyperlink(args: {
   pid?: string;
@@ -457,83 +475,26 @@ export function buildPortalUrlHyperlink(args: {
     ? `https://www.compass.com${args.pageLink}`
     : `https://www.compass.com/homedetails/${args.listingIdSHA ?? ''}_lid/`;
   const target = args.pid ? (pidUrl ?? lidUrl) : lidUrl;
-  return `=HYPERLINK("${target}","Compass")`;
+  return buildHyperlinkFormula(target, 'Compass');
 }
 
 /**
- * Convert an HOA `{amount, frequency}` to monthly USD, rounded to the
- * nearest dollar. Returns `null` for unknown frequency strings (with a
- * stderr warning so misclassification is visible) or when the inputs
- * are absent. (Issue #36.)
- */
-export function hoaToMonthlyUsd(
-  amount: number | undefined,
-  frequency: string | undefined
-): number | null {
-  if (typeof amount !== 'number' || !frequency) return null;
-  let monthly: number;
-  switch (frequency) {
-    case 'Monthly':
-      monthly = amount;
-      break;
-    case 'Annually':
-      monthly = amount / 12;
-      break;
-    case 'Quarterly':
-      monthly = amount / 3;
-      break;
-    case 'SemiAnnually':
-      monthly = amount / 6;
-      break;
-    case 'Weekly':
-      monthly = (amount * 52) / 12;
-      break;
-    default:
-      console.error(
-        `[compass-mcp] hoa_monthly_usd: unknown frequency "${frequency}" — returning null`
-      );
-      return null;
-  }
-  return Math.round(monthly);
-}
-
-/** Square feet in one acre. */
-const SQFT_PER_ACRE = 43_560;
-
-/**
- * Derive lot size in acres from a square-foot lot size, rounded to 2 dp
- * (#82). Pairs with the raw `lot_size_sqft` — acreage is the unit that
- * matters for rural/mountain/land listings (Compass surfaces both as e.g.
+ * Derive lot size in acres from a square-foot lot size (#82). Pairs with
+ * the raw `lot_size_sqft` — acreage is the unit that matters for
+ * rural/mountain/land listings (Compass surfaces both as e.g.
  * "1.05 AC / 45,738 SF" upstream).
  *
- * Null-safe: returns `null` (never `0`) when the input is missing,
- * non-finite, or `<= 0` — a `0`/absent lot is treated as missing (condos /
- * missing public records), not a real "0 acre" lot. A tiny positive lot
- * that rounds to `0.00` acres (sqft 1–217) also yields `null`, so the
- * field stays consistent with the canonical cohort semantic (present ⇒
- * a real, non-zero acreage).
+ * Thin adapter over the cohort `sqftToAcres` (realty-mcp#1): the
+ * canonical helper's guard (`<= 0` → null, plus a tiny-lot
+ * `< ~218 sqft → null` so a non-null result is always `> 0`) is
+ * byte-behavior-identical to compass's prior inline `lotSizeAcres`, so
+ * the swap is behavior-preserving. Kept as a named export because the
+ * tool's call site + unit tests refer to `lotSizeAcres`.
  */
 export function lotSizeAcres(
   lotSqFt: number | undefined | null
 ): number | null {
-  if (typeof lotSqFt !== 'number' || !Number.isFinite(lotSqFt) || lotSqFt <= 0) {
-    return null;
-  }
-  const acres = Math.round((lotSqFt / SQFT_PER_ACRE) * 100) / 100;
-  return acres > 0 ? acres : null;
-}
-
-/**
- * Null out the 0/1 not-yet-assessed sentinel that Compass surfaces on
- * some new-construction listings. (Issue #38.)
- */
-export function sanitizeTaxAnnual(raw: number | undefined): number | null {
-  if (typeof raw !== 'number') return null;
-  // Real-world: $1 is a not-yet-assessed placeholder for new
-  // construction; $0 is the same placeholder under a different MLS
-  // feed's convention. Null both.
-  if (raw <= 1) return null;
-  return raw;
+  return sqftToAcres(lotSqFt ?? undefined);
 }
 
 /**
@@ -559,49 +520,27 @@ function earliestListedEvent(
 }
 
 /**
- * Days between `ms` (a unix-ms timestamp) and now, floored. Returns
- * null if the timestamp is missing.
- */
-function daysSinceMs(ms: number | undefined): number | null {
-  if (typeof ms !== 'number') return null;
-  const delta = Date.now() - ms;
-  if (!Number.isFinite(delta)) return null;
-  return Math.floor(delta / 86_400_000);
-}
-
-/**
- * Normalize an address for equality checks — collapse whitespace, drop
- * punctuation, lowercase. Used to dedupe `address_alternates` against
- * the primary `address`.
- */
-function normalizeAddressForCompare(s: string | undefined): string {
-  if (!s) return '';
-  return s.toLowerCase().replace(/[,#.]/g, '').replace(/\s+/g, ' ').trim();
-}
-
-/**
  * Collect alternate-address strings, excluding any that normalize to
  * the primary. Returns an empty array when nothing distinct surfaces.
  * (Issue #44.)
+ *
+ * Compass's alternate-address derivation (pull from
+ * `raw.mlsAlternateAddresses`, trim, drop blanks) is portal-specific and
+ * stays here; the normalize-and-dedupe-against-primary logic delegates to
+ * the cohort `collectAddressAlternates` (realty-mcp#1), whose
+ * `normalizeAddressForCompare` body was byte-identical to compass's prior
+ * inline copy. This is distinct from the by-address verifier's binary
+ * `addressMatchesQuery` gate, which is intentionally NOT hoisted.
  */
 export function collectAddressAlternates(
   primary: string | undefined,
   raw: RawListing
 ): string[] {
-  const primaryNorm = normalizeAddressForCompare(primary);
   const candidates: string[] = [];
   for (const c of raw.mlsAlternateAddresses ?? []) {
     if (typeof c === 'string' && c.trim()) candidates.push(c.trim());
   }
-  const seen = new Set<string>();
-  const alternates: string[] = [];
-  for (const candidate of candidates) {
-    const norm = normalizeAddressForCompare(candidate);
-    if (!norm || norm === primaryNorm || seen.has(norm)) continue;
-    seen.add(norm);
-    alternates.push(candidate);
-  }
-  return alternates;
+  return collectAddressAlternatesCore(primary, candidates);
 }
 
 export function format(
@@ -641,24 +580,24 @@ export function format(
     dInfo.associationFee?.amount,
     dInfo.associationFee?.frequency
   );
-  const taxAnnual = sanitizeTaxAnnual(dInfo.taxAnnualAmount);
+  // tax_annual + tax_status: cleanTaxAnnual (realty-mcp#1) nulls the
+  // not-yet-assessed sentinel and reports a `tax_status`. Behavior delta
+  // vs the old inline `sanitizeTaxAnnual` (which nulled only `<= 1`): the
+  // canonical sentinel threshold is `< 10`, so a 2–9 figure is now
+  // flagged `not_yet_assessed` instead of passing through.
+  const { tax_annual: taxAnnual, tax_status: taxStatus } = cleanTaxAnnual(
+    dInfo.taxAnnualAmount
+  );
   // price_drop_* + days_on_market: derive from the events[] trail.
+  // priceDrop(previous, current) → {amount, percent} | null (realty-mcp#1).
+  // Behavior delta vs the old inline: a price *rise* (or unchanged price)
+  // now yields null rather than a negative `price_drop_amount` — correct
+  // for a field named `price_drop_*`.
   const listedEvent = earliestListedEvent(listing.events);
-  const previousListPrice = listedEvent?.price;
-  const currentPrice = price.lastKnown;
-  let priceDropAmount: number | null = null;
-  let priceDropPercent: number | null = null;
-  if (
-    typeof previousListPrice === 'number' &&
-    typeof currentPrice === 'number' &&
-    previousListPrice > 0 &&
-    previousListPrice !== currentPrice
-  ) {
-    const drop = previousListPrice - currentPrice;
-    priceDropAmount = drop;
-    priceDropPercent = Math.round((drop / previousListPrice) * 1000) / 10;
-  }
-  const daysOnMarket = daysSinceMs(listedEvent?.timestamp);
+  const drop = priceDrop(listedEvent?.price, price.lastKnown);
+  const priceDropAmount: number | null = drop ? drop.amount : null;
+  const priceDropPercent: number | null = drop ? drop.percent : null;
+  const daysOnMarket = daysSince(listedEvent?.timestamp ?? null);
   const alternates = collectAddressAlternates(loc.prettyAddress, listing);
   // Primary listing agent (issue #52). Compass surfaces multiple agents
   // sometimes; the first entry is the listing agent.
@@ -704,6 +643,7 @@ export function format(
     price_drop_percent: priceDropPercent,
     days_on_market: daysOnMarket,
     tax_annual: taxAnnual,
+    tax_status: taxStatus,
     hoa_monthly_usd: hoaMonthlyUsd,
     beds: size.bedrooms,
     baths: size.totalBathrooms ?? size.bathrooms,

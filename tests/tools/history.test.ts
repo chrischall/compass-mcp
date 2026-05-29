@@ -52,7 +52,10 @@ describe('formatHistoryEvent', () => {
 });
 
 describe('normalizeEventType', () => {
-  // The shared cross-MCP enum is documented in issue #48.
+  // The shared cross-MCP enum is documented in issue #48 / realty-mcp#1.
+  // normalizeEventType now delegates to the cohort `mapEventType`, folding
+  // its `'Unknown'` sentinel back to `undefined` (compass's drop-on-unknown
+  // contract).
   it.each([
     ['Listed', 'Listed'],
     ['Active', 'Listed'],
@@ -71,6 +74,24 @@ describe('normalizeEventType', () => {
     ['Off Market', 'Delisted'],
     ['Something Weird', undefined],
   ])('maps "%s" -> %s', (input, expected) => {
+    expect(normalizeEventType(input)).toBe(expected);
+  });
+
+  // Behavior deltas adopted from the canonical mapper (realty-mcp#1):
+  it.each([
+    // `\bactive\b` word-boundary: "Inactive"/"Deactivated" no longer
+    // false-match Listed (they were swept in by the old bare-substring
+    // `active` rule).
+    ['Inactive', undefined],
+    ['Deactivated', undefined],
+    // `\bclosed\b` word-boundary: "Foreclosed"/"Foreclosure" no longer
+    // false-match Sold.
+    ['Foreclosed', undefined],
+    // `cancel` now maps to Withdrawn (canonical) — the old inline routed
+    // it to Delisted.
+    ['Cancelled', 'Withdrawn'],
+    ['Listing Cancelled', 'Withdrawn'],
+  ])('delta: maps "%s" -> %s', (input, expected) => {
     expect(normalizeEventType(input)).toBe(expected);
   });
 });
