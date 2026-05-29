@@ -21,79 +21,20 @@
  *   - https://www.compass.com/homedetails/.../<listingIdSHA>_lid/
  */
 
-/**
- * Walk a balanced `{}` object starting at `start` (which must point to
- * a `{`). Returns the parsed value, or null on imbalance / parse error.
- *
- * Handles strings (with `\"` and `\\` escapes) so that braces inside
- * string literals don't throw off the counter.
- */
-export function extractBalancedObject(
-  text: string,
-  start: number
-): unknown | null {
-  if (text[start] !== '{') return null;
-  let depth = 0;
-  let inString = false;
-  for (let i = start; i < text.length; i++) {
-    const ch = text[i];
-    if (inString) {
-      if (ch === '\\') {
-        i++; // skip escaped char
-        continue;
-      }
-      if (ch === '"') inString = false;
-      continue;
-    }
-    if (ch === '"') {
-      inString = true;
-      continue;
-    }
-    if (ch === '{') depth++;
-    else if (ch === '}') {
-      depth--;
-      if (depth === 0) {
-        const blob = text.slice(start, i + 1);
-        try {
-          return JSON.parse(blob);
-        } catch {
-          return null;
-        }
-      }
-    }
-  }
-  return null;
-}
+// The balanced-brace walker and global-assignment lifter were generalized
+// out of this file into `@fetchproxy/server` (it now serves the whole
+// SSR-scraping realty cohort). We consume the published versions rather
+// than maintain local copies. fetchproxy's `extractGlobalAssign` is a
+// strict superset of the old local one — it additionally matches
+// `var|let|const` declarations, adds an identifier-boundary guard (so a
+// search for `uc` won't match `myuc`), and escapes all regex
+// metacharacters — and is behavior-identical for Compass's three names
+// (`uc`, `__INITIAL_DATA__`, `__AGENT_PROFILE__`).
+import { extractGlobalAssign } from '@fetchproxy/server';
 
-/**
- * Find the first global assignment matching the given name and return
- * the parsed object. Looks for `global.<name> = {…}` and
- * `window.<name> = {…}` (both are common — Compass uses `global.` but
- * client code can rewrite to `window.`).
- *
- * Returns null when the assignment is missing or the object can't be
- * parsed.
- */
-export function extractGlobalAssign(
-  html: string,
-  name: string
-): Record<string, unknown> | null {
-  // Match `global.<name> = ` or `window.<name> = ` followed by a `{`.
-  const re = new RegExp(
-    `(?:global|window)\\.${name.replace(/[$]/g, '\\$&')}\\s*=\\s*`,
-    'g'
-  );
-  let match: RegExpExecArray | null;
-  while ((match = re.exec(html)) !== null) {
-    const after = match.index + match[0].length;
-    if (html[after] !== '{') continue;
-    const obj = extractBalancedObject(html, after);
-    if (obj && typeof obj === 'object') {
-      return obj as Record<string, unknown>;
-    }
-  }
-  return null;
-}
+// Re-export so existing importers (and tests) can keep pulling these
+// primitives from `page-state.ts` with zero churn.
+export { extractBalancedObject, extractGlobalAssign } from '@fetchproxy/server';
 
 /**
  * Extract the `uc` global from a Compass page. This is the bootstrap
