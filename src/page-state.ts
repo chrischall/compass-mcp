@@ -30,11 +30,14 @@
 // search for `uc` won't match `myuc`), and escapes all regex
 // metacharacters — and is behavior-identical for Compass's three names
 // (`uc`, `__INITIAL_DATA__`, `__AGENT_PROFILE__`).
-import { extractGlobalAssign } from '@fetchproxy/server';
+import { extractGlobalAssign } from '@chrischall/mcp-utils/fetchproxy';
 
 // Re-export so existing importers (and tests) can keep pulling these
 // primitives from `page-state.ts` with zero churn.
-export { extractBalancedObject, extractGlobalAssign } from '@fetchproxy/server';
+export {
+  extractBalancedObject,
+  extractGlobalAssign,
+} from '@chrischall/mcp-utils/fetchproxy';
 
 /**
  * Extract the `uc` global from a Compass page. This is the bootstrap

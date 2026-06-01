@@ -315,10 +315,14 @@ describe('FetchproxyTransport', () => {
     // binding resolves to the patched class.
     const seen: Array<Record<string, unknown>> = [];
     vi.resetModules();
-    vi.doMock('@fetchproxy/server', async () => {
-      const actual = await vi.importActual<typeof import('@fetchproxy/server')>(
-        '@fetchproxy/server'
-      );
+    // src/transport-fetchproxy.ts imports FetchproxyServer via the
+    // @chrischall/mcp-utils/fetchproxy re-export (single import site), so
+    // mock THAT subpath — not the underlying '@fetchproxy/server' — or the
+    // module-scope binding resolves to the real class and the capture misses.
+    vi.doMock('@chrischall/mcp-utils/fetchproxy', async () => {
+      const actual = await vi.importActual<
+        typeof import('@chrischall/mcp-utils/fetchproxy')
+      >('@chrischall/mcp-utils/fetchproxy');
       class Capturing extends actual.FetchproxyServer {
         constructor(opts: ConstructorParameters<typeof actual.FetchproxyServer>[0]) {
           seen.push(opts as unknown as Record<string, unknown>);
@@ -336,7 +340,7 @@ describe('FetchproxyTransport', () => {
     expect(seen).toHaveLength(1);
     expect(seen[0]).not.toHaveProperty('keepAliveIntervalMs');
 
-    vi.doUnmock('@fetchproxy/server');
+    vi.doUnmock('@chrischall/mcp-utils/fetchproxy');
     vi.resetModules();
   });
 });

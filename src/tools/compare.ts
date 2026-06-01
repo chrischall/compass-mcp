@@ -5,7 +5,7 @@ import {
   classifyRowError,
   mapWithConcurrency,
   retryOnceOnTimeout,
-} from '@fetchproxy/server';
+} from '@chrischall/mcp-utils/fetchproxy';
 import type { CompassClient } from '../client.js';
 import { textResult } from '../mcp.js';
 import {
