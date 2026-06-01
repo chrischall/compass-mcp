@@ -5,7 +5,7 @@ import {
   classifyBridgeError,
   FetchproxyBridgeDownError,
   FetchproxyTimeoutError,
-} from '@fetchproxy/server';
+} from '@chrischall/mcp-utils/fetchproxy';
 
 /**
  * Round-trip a no-op request through the full bridge so the user can

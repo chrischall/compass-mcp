@@ -3,7 +3,7 @@ import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import {
   FetchproxyBridgeDownError,
   FetchproxyTimeoutError,
-} from '@fetchproxy/server';
+} from '@chrischall/mcp-utils/fetchproxy';
 import {
   normalizeAddressForCompare,
   SUFFIX_PAIRS,

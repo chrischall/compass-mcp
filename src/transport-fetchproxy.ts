@@ -21,7 +21,7 @@
 import {
   FetchproxyServer,
   type FetchproxyServerOpts,
-} from '@fetchproxy/server';
+} from '@chrischall/mcp-utils/fetchproxy';
 import type {
   BridgeStatus,
   FetchInit,
@@ -35,7 +35,7 @@ import type {
 export {
   FetchproxyBridgeDownError,
   FetchproxyTimeoutError,
-} from '@fetchproxy/server';
+} from '@chrischall/mcp-utils/fetchproxy';
 
 const DEFAULT_PORT = 37_149;
 
