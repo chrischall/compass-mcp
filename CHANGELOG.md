@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.11.1](https://github.com/chrischall/compass-mcp/compare/v0.11.0...v0.11.1) (2026-06-01)
+
+
+### Refactor
+
+* route @fetchproxy/server through @chrischall/mcp-utils/fetchproxy (single import site) ([#101](https://github.com/chrischall/compass-mcp/issues/101)) ([9a96b57](https://github.com/chrischall/compass-mcp/commit/9a96b5706e6c3a162d48d5cdb9e01955c63583af))
+
 ## [0.11.0](https://github.com/chrischall/compass-mcp/compare/v0.10.0...v0.11.0) (2026-05-29)
 
 
