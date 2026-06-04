@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.11.2](https://github.com/chrischall/compass-mcp/compare/v0.11.1...v0.11.2) (2026-06-04)
+
+
+### Bug Fixes
+
+* adopt @fetchproxy/server 0.13.0 (bridge host failover + re-pairing) ([#108](https://github.com/chrischall/compass-mcp/issues/108)) ([10e1e06](https://github.com/chrischall/compass-mcp/commit/10e1e066cd4a06b6a6c99a5c3a56afda5a40e18b))
+* adopt @fetchproxy/server 1.0.0 + @chrischall/mcp-utils 0.5.0 ([#110](https://github.com/chrischall/compass-mcp/issues/110)) ([65f4430](https://github.com/chrischall/compass-mcp/commit/65f44308c56949f427f93f6a6907a02c780bee8d))
+
 ## [0.11.1](https://github.com/chrischall/compass-mcp/compare/v0.11.0...v0.11.1) (2026-06-01)
 
 
