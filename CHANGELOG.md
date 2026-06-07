@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.11.3](https://github.com/chrischall/compass-mcp/compare/v0.11.2...v0.11.3) (2026-06-07)
+
+
+### Documentation
+
+* neutral wording for fetchproxy routing in marketplace description ([#114](https://github.com/chrischall/compass-mcp/issues/114)) ([8209e65](https://github.com/chrischall/compass-mcp/commit/8209e6558dd0ef22e765e8e7a212f9513cd90026))
+
 ## [0.11.2](https://github.com/chrischall/compass-mcp/compare/v0.11.1...v0.11.2) (2026-06-04)
 
 
