@@ -93,6 +93,37 @@ describe('CompassClient', () => {
     );
   });
 
+  it('SessionNotAuthenticatedError is the shared @chrischall/mcp-utils class, parameterized for Compass', async () => {
+    const upstream = await import('@chrischall/mcp-utils');
+    expect(SessionNotAuthenticatedError).toBe(
+      upstream.SessionNotAuthenticatedError
+    );
+    const client = new CompassClient({
+      transport: stubTransport(async () => ({
+        status: 200,
+        body: '<html>login form</html>',
+        url: 'https://www.compass.com/login',
+      })),
+    });
+    const err = await client.fetchHtml('/mycompass/favorites').then(
+      () => {
+        throw new Error('expected fetchHtml to reject');
+      },
+      (e: unknown) => e as InstanceType<typeof SessionNotAuthenticatedError>
+    );
+    // Parameterized message: names Compass + the sign-in host, and the
+    // trailing clause is the shared "other account data" phrasing (the
+    // old local class said "recent activity").
+    expect(err.message).toBe(
+      'Not signed in to Compass. Open compass.com in your browser and sign in, then try again. ' +
+        'Saved searches, saved homes, and other account data require a signed-in session.'
+    );
+    // The shared class carries a machine-readable hint.
+    expect(err.hint).toBe(
+      'Open compass.com in your browser and sign in, then try again.'
+    );
+  });
+
   it('fetchHtml throws SessionNotAuthenticatedError on AWS WAF challenge', async () => {
     const client = new CompassClient({
       transport: stubTransport(async () => ({

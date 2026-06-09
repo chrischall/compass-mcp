@@ -19,7 +19,10 @@
 //
 // Error mapping (non-2xx, sign-in interstitial, empty 204 body) lives
 // here so tool authors never have to think about it.
-import { truncateErrorMessage } from '@chrischall/mcp-utils';
+import {
+  SessionNotAuthenticatedError,
+  truncateErrorMessage,
+} from '@chrischall/mcp-utils';
 import type {
   BridgeStatus,
   FetchResult,
@@ -42,15 +45,13 @@ export interface RegisteredSession {
   status: BridgeStatus;
 }
 
-export class SessionNotAuthenticatedError extends Error {
-  constructor() {
-    super(
-      'Not signed in to Compass. Open compass.com in your browser and sign in, then try again. ' +
-        'Saved searches, saved homes, and recent activity require a signed-in session.'
-    );
-    this.name = 'SessionNotAuthenticatedError';
-  }
-}
+// The canonical parameterized SessionNotAuthenticatedError lives in
+// @chrischall/mcp-utils; re-exported so existing `./client.js`
+// importers keep working. Thrown below as
+// `new SessionNotAuthenticatedError('Compass', 'compass.com')` — the
+// message names Compass + the sign-in host and the instance carries a
+// machine-readable `hint`.
+export { SessionNotAuthenticatedError };
 
 export interface CompassClientOptions {
   /** Transport used to relay fetches to the user's browser. */
@@ -222,6 +223,7 @@ export class CompassClient {
       (result.body.includes('awswaf.com') &&
         result.body.includes('challenge.js') &&
         result.body.length < 80_000);
-    if (looksLikeSignIn) throw new SessionNotAuthenticatedError();
+    if (looksLikeSignIn)
+      throw new SessionNotAuthenticatedError('Compass', 'compass.com');
   }
 }
