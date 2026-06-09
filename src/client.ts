@@ -19,6 +19,7 @@
 //
 // Error mapping (non-2xx, sign-in interstitial, empty 204 body) lives
 // here so tool authors never have to think about it.
+import { truncateErrorMessage } from '@chrischall/mcp-utils';
 import type {
   BridgeStatus,
   FetchResult,
@@ -195,11 +196,14 @@ export class CompassClient {
 
   private throwIfNotOk(result: FetchResult, method: string, path: string): void {
     if (result.status >= 200 && result.status < 300) return;
-    const bodyPreview = result.body
-      ? ` — ${result.body.slice(0, 500).replace(/\s+/g, ' ').trim()}${
-          result.body.length > 500 ? '…' : ''
-        }`
+    // truncateErrorMessage (mcp-utils) redacts any bearer/JWT secrets BEFORE
+    // truncating at the fleet-wide 500-char budget; we collapse internal
+    // whitespace first so multi-line HTML error pages stay one line. Same
+    // shape as the opentable/musescore siblings.
+    const collapsed = result.body
+      ? result.body.replace(/\s+/g, ' ').trim()
       : '';
+    const bodyPreview = collapsed ? ` — ${truncateErrorMessage(collapsed)}` : '';
     throw new Error(
       `Compass API error: ${result.status} for ${method} ${path}${bodyPreview}`
     );
