@@ -4,13 +4,16 @@
 // As of @chrischall/mcp-utils 0.9, the FetchproxyServer construction +
 // start/close lifecycle AND the per-verb passthroughs (fetch / requestJson /
 // runProbe) that ~12 fetchproxy MCPs each hand-rolled are factored into
-// `createFetchproxyTransport`. We delegate to its inner adapter and keep only
-// what's compass-specific: the port/serverName/domain pins and the
-// `defaultSubdomain: 'www'` choice (every relative compass path is served from
-// www.compass.com). The verb adapters forward `FetchproxyServerOpts` verbatim,
-// so the compass contract is intact — port 37149, fetchTimeoutMs / revive
-// defaults from the server (0.10.0: keepAliveIntervalMs default 25_000 too),
-// and the typed FetchproxyBridgeDownError / FetchproxyTimeoutError thrown
+// `createFetchproxyTransport`. 0.10.0 additionally folds in the canonical
+// `[compass-mcp:bridge] listening …` startup banner (`logListening: true`) and
+// the `serverVersion` field on `status()` — both of which compass used to
+// hand-roll — so this class no longer carries either. We delegate to the inner
+// adapter and keep only what's compass-specific: the port/serverName/domain
+// pins and the `defaultSubdomain: 'www'` choice (every relative compass path is
+// served from www.compass.com). The verb adapters forward `FetchproxyServerOpts`
+// verbatim, so the compass contract is intact — port 37149, fetchTimeoutMs /
+// revive defaults from the server (0.10.0: keepAliveIntervalMs default 25_000
+// too), and the typed FetchproxyBridgeDownError / FetchproxyTimeoutError thrown
 // straight through on bridge failure.
 
 import {
@@ -53,17 +56,14 @@ export interface FetchproxyTransportOptions {
 
 export class FetchproxyTransport implements CompassTransport {
   // createFetchproxyTransport owns the FetchproxyServer construction, the
-  // start/close lifecycle, and the fetch / requestJson / runProbe verb
-  // passthroughs (each with `defaultSubdomain: 'www'` applied). We keep this
-  // thin class so the CompassTransport interface (consumed by CompassClient
-  // and the session tools) stays stable.
+  // start/close lifecycle (incl. the canonical `[compass-mcp:bridge]
+  // listening …` banner via `logListening: true`), and the fetch /
+  // requestJson / runProbe verb passthroughs (each with `defaultSubdomain:
+  // 'www'` applied). We keep this thin class so the CompassTransport interface
+  // (consumed by CompassClient and the session tools) stays stable.
   private readonly inner: FetchproxyTransportAdapter;
-  private readonly port: number;
-  private readonly version: string;
 
   constructor(opts: FetchproxyTransportOptions) {
-    this.port = opts.port ?? DEFAULT_PORT;
-    this.version = opts.version;
     this.inner = createFetchproxyTransport({
       port: opts.port ?? DEFAULT_PORT,
       serverName: opts.server ?? 'compass-mcp',
@@ -75,6 +75,12 @@ export class FetchproxyTransport implements CompassTransport {
       // http(s):// paths self-describe their host and ignore it (so a
       // photos.compass.com URL still routes to the photos tab).
       defaultSubdomain: 'www',
+      // 0.10.0: emit the canonical fleet startup banner from the factory's
+      // start() (stderr only — stdout is the MCP JSON-RPC channel):
+      //   [compass-mcp:bridge] listening on 127.0.0.1:<port> (role=…, version=…)
+      // Byte-identical to the banner compass used to hand-roll; the factory
+      // resolves <port> from bridgeHealth() after listen.
+      logListening: true,
       // keepAliveIntervalMs (fetchproxy#71) defaults to 25_000 as of 0.10.0,
       // and fetchTimeoutMs / bridgeReviveDelayMs default to 30_000 / 2_000 —
       // matching what compass would otherwise hardcode. Only forward when the
@@ -88,16 +94,8 @@ export class FetchproxyTransport implements CompassTransport {
     });
   }
 
-  async start(): Promise<void> {
-    await this.inner.start();
-    // Restore the unconditional bootstrap banner the hand-rolled transport
-    // emitted (mcp-utils' adapter only logs behind its debugEnvVar). stderr
-    // only — stdout is the MCP JSON-RPC channel. Role is `unknown` until the
-    // first verb binds the port + elects.
-    console.error(
-      `[compass-mcp:bridge] listening on 127.0.0.1:${this.port} ` +
-        `(role=${this.inner.role ?? 'unknown'}, version=${this.version})`,
-    );
+  start(): Promise<void> {
+    return this.inner.start();
   }
 
   close(): Promise<void> {
@@ -105,9 +103,10 @@ export class FetchproxyTransport implements CompassTransport {
   }
 
   /**
-   * Diagnostic snapshot of the bridge. The adapter's `status()` returns
-   * `bridgeHealth()` directly — a superset of `BridgeStatus` (same field
-   * names), so it satisfies the interface structurally.
+   * Diagnostic snapshot of the bridge — delegated straight through. As of
+   * 0.10.0 the adapter's `status()` additively pins `serverVersion` to the
+   * `version` opt (the projection compass used to hand-roll), so this is a
+   * plain passthrough that already satisfies `BridgeStatus`.
    */
   status(): BridgeStatus {
     return this.inner.status();
