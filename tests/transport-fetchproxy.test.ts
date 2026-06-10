@@ -236,13 +236,19 @@ describe('FetchproxyTransport', () => {
     expect(t.status().role).toBeNull();
   });
 
-  it('start/close delegate to the inner adapter', async () => {
+  it('start/close delegate to the inner adapter without a hand-rolled banner', async () => {
     const t = new FetchproxyTransport({ version: '0.0.0' });
     const inner = stubInner();
     installInner(t, inner);
 
+    // 0.10.0: the canonical `[compass-mcp:bridge] listening …` banner is
+    // emitted by the factory (logListening: true), not hand-rolled here, so
+    // compass's start() is a plain delegate that writes nothing to stderr.
+    const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
     await t.start();
     expect(inner.start).toHaveBeenCalledTimes(1);
+    expect(errSpy).not.toHaveBeenCalled();
+    errSpy.mockRestore();
 
     await t.close();
     expect(inner.close).toHaveBeenCalledTimes(1);
@@ -285,6 +291,10 @@ describe('FetchproxyTransport', () => {
       version: '1.2.3',
       domains: ['compass.com'],
       defaultSubdomain: 'www',
+      // 0.10.0: the factory emits the canonical `[compass-mcp:bridge]
+      // listening …` banner on start(); compass opts in and drops its
+      // hand-rolled console.error.
+      logListening: true,
     });
     // 0.10.0 default of 25_000 — not forwarded explicitly (fetchproxy#71).
     expect(seen[0]).not.toHaveProperty('keepAliveIntervalMs');
