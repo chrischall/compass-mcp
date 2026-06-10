@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.11.4](https://github.com/chrischall/compass-mcp/compare/v0.11.3...v0.11.4) (2026-06-10)
+
+
+### Bug Fixes
+
+* redact secrets from non-2xx error body previews ([#116](https://github.com/chrischall/compass-mcp/issues/116)) ([9729816](https://github.com/chrischall/compass-mcp/commit/9729816fc730854234541de425768bbe7cf84427))
+
+
+### Refactor
+
+* adopt 0.10.0 transport banner + serverVersion ([#120](https://github.com/chrischall/compass-mcp/issues/120)) ([3c4729e](https://github.com/chrischall/compass-mcp/commit/3c4729e77ebc7fac4fcfc911393341b18cbfc302))
+* adopt mcp-utils 0.9 fetchproxy healthcheck + transport-verb helpers ([#119](https://github.com/chrischall/compass-mcp/issues/119)) ([4de0748](https://github.com/chrischall/compass-mcp/commit/4de07480d22fc68d8ef759de252150e949838f66))
+* adopt shared SessionNotAuthenticatedError from @chrischall/mcp-utils 0.7.0 ([#118](https://github.com/chrischall/compass-mcp/issues/118)) ([606b00b](https://github.com/chrischall/compass-mcp/commit/606b00b0f1f2d7a25c550c748fea52c4e98dfc77))
+
 ## [0.11.3](https://github.com/chrischall/compass-mcp/compare/v0.11.2...v0.11.3) (2026-06-07)
 
 
