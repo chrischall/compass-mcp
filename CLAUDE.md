@@ -36,8 +36,9 @@ This is a "Pattern A" fetchproxy MCP (every call rides through fetchproxy), not 
 src/
   index.ts              # entry — builds FetchproxyTransport, CompassClient,
                         #   registers tool groups, connects stdio transport
-  transport.ts          # CompassTransport interface
-  transport-fetchproxy.ts # adapter over @fetchproxy/server's FetchproxyServer
+  transport.ts          # CompassTransport interface (BridgeStatus = @fetchproxy/server's BridgeHealth)
+  transport-fetchproxy.ts # thin delegate over mcp-utils' createFetchproxyTransport
+                        #   (FetchproxyServer construction + start/close + fetch/requestJson/runProbe verbs)
   client.ts             # CompassClient.fetchHtml / fetchJson
                         #   + sign-in detection (WAF challenge / /login redirect)
   page-state.ts         # extractUc + extractInitialData + extractAgentProfile + balanced-brace helpers
@@ -59,7 +60,8 @@ src/
     resolve-addresses.ts # compass_resolve_addresses (bulk by-address, shared rung walker)
     typeahead.ts        # omnisuggest autocomplete helpers (WAF-immune resolution rung)
     agent-listings.ts   # compass_get_agent_listings (/agents/<slug>/ __AGENT_PROFILE__ → active + closed listings)
-    healthcheck.ts      # compass_healthcheck (no-op /robots.txt round-trip through the bridge)
+    healthcheck.ts      # compass_healthcheck — thin wiring of mcp-utils'
+                        #   registerBridgeHealthcheckTool (probe loop + hint ladder + result shape live there)
     session.ts          # compass_get_session_context + compass_set_active_session
 
 tests/                  # 1:1 mirror of src/, plus tests/helpers.ts harness.

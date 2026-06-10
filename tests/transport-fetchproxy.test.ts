@@ -1,10 +1,16 @@
 // Adapter-level tests for FetchproxyTransport.
 //
-// As of @fetchproxy/server 0.8.0 the server owns lazy-revive, the
-// per-request timeout, and the freshness counters — so this file is
-// reduced to the compass-specific surface: relative path → subdomain
-// resolution, absolute pass-through, status() mirroring bridgeHealth(),
-// typed-error pass-through, and start/close delegation.
+// As of @chrischall/mcp-utils 0.9, FetchproxyServer construction + the
+// start/close lifecycle + the fetch / requestJson / runProbe verb passthroughs
+// are factored into `createFetchproxyTransport`. compass's FetchproxyTransport
+// is now a thin class that delegates to that inner adapter, keeping only the
+// compass-specific pins (port 37149, serverName, compass.com domain,
+// `defaultSubdomain: 'www'`) and the requestJson method-mapping (compass takes
+// the method inside `init`; the adapter takes it positionally).
+//
+// These tests stub the inner adapter and assert the delegation contract:
+// constructor wiring, verb forwarding (incl. the method-position remap),
+// status() mirroring, runProbe forwarding, and start/close delegation.
 import { describe, it, expect, vi } from 'vitest';
 import {
   FetchproxyBridgeDownError,
@@ -13,33 +19,32 @@ import {
 } from '../src/transport-fetchproxy.js';
 
 type Inner = {
-  listen: ReturnType<typeof vi.fn>;
+  start: ReturnType<typeof vi.fn>;
   close: ReturnType<typeof vi.fn>;
-  request: ReturnType<typeof vi.fn>;
+  fetch: ReturnType<typeof vi.fn>;
   requestJson: ReturnType<typeof vi.fn>;
-  bridgeHealth: ReturnType<typeof vi.fn>;
-  role: 'host' | 'peer' | null;
+  runProbe: ReturnType<typeof vi.fn>;
+  status: ReturnType<typeof vi.fn>;
 };
 
 function stubInner(role: 'host' | 'peer' | null = 'host'): Inner {
   return {
-    listen: vi.fn().mockResolvedValue(undefined),
+    start: vi.fn().mockResolvedValue(undefined),
     close: vi.fn().mockResolvedValue(undefined),
-    request: vi.fn(),
+    fetch: vi.fn(),
     requestJson: vi.fn(),
-    bridgeHealth: vi.fn().mockReturnValue({
+    runProbe: vi.fn(),
+    status: vi.fn().mockReturnValue({
       role,
       port: 37149,
       serverVersion: '0.0.0',
       fetchTimeoutMs: 30_000,
-      bridgeReviveDelayMs: 2_000,
       lastSuccessAt: null,
       lastFailureAt: null,
       lastFailureReason: null,
       consecutiveFailures: 0,
       lastExtensionMessageAt: null,
     }),
-    role,
   };
 }
 
@@ -49,46 +54,10 @@ function installInner(t: FetchproxyTransport, inner: Inner): void {
 }
 
 describe('FetchproxyTransport', () => {
-  it('relative paths resolve against www.compass.com via subdomain: www', async () => {
+  it('forwards fetch() to the inner adapter (which applies defaultSubdomain: www) and returns its triple', async () => {
     const t = new FetchproxyTransport({ version: '0.0.0' });
     const inner = stubInner();
-    inner.request.mockResolvedValue({
-      status: 200,
-      body: 'x',
-      url: 'https://www.compass.com/home/40732555',
-    });
-    installInner(t, inner);
-
-    await t.fetch({ path: '/home/40732555', method: 'GET' });
-    const [method, path, opts] = inner.request.mock.calls[0];
-    expect(method).toBe('GET');
-    expect(path).toBe('/home/40732555');
-    expect(opts.subdomain).toBe('www');
-  });
-
-  it('absolute URLs pass through; subdomain is harmless because the server derives tabUrl from the URL host', async () => {
-    // 0.8.0+: server's request() ignores `subdomain` for absolute
-    // paths and derives tabUrl from the URL host. So always passing
-    // `subdomain: 'www'` is safe even for photos.compass.com URLs —
-    // tabUrl will be `https://photos.compass.com/`, not www's.
-    const t = new FetchproxyTransport({ version: '0.0.0' });
-    const inner = stubInner();
-    inner.request.mockResolvedValue({
-      status: 200,
-      body: '',
-      url: 'https://photos.compass.com/x',
-    });
-    installInner(t, inner);
-
-    await t.fetch({ path: 'https://photos.compass.com/x', method: 'GET' });
-    const [, path] = inner.request.mock.calls[0];
-    expect(path).toBe('https://photos.compass.com/x');
-  });
-
-  it('returns the {status, body, url} triple from inner.request()', async () => {
-    const t = new FetchproxyTransport({ version: '0.0.0' });
-    const inner = stubInner();
-    inner.request.mockResolvedValue({
+    inner.fetch.mockResolvedValue({
       status: 200,
       body: 'hello',
       url: 'https://www.compass.com/x',
@@ -96,6 +65,7 @@ describe('FetchproxyTransport', () => {
     installInner(t, inner);
 
     const result = await t.fetch({ path: '/x', method: 'GET' });
+    expect(inner.fetch).toHaveBeenCalledWith({ path: '/x', method: 'GET' });
     expect(result).toEqual({
       status: 200,
       body: 'hello',
@@ -103,10 +73,10 @@ describe('FetchproxyTransport', () => {
     });
   });
 
-  it('forwards headers and body through to inner.request()', async () => {
+  it('forwards headers and body through fetch() to the inner adapter', async () => {
     const t = new FetchproxyTransport({ version: '0.0.0' });
     const inner = stubInner();
-    inner.request.mockResolvedValue({
+    inner.fetch.mockResolvedValue({
       status: 200,
       body: '{}',
       url: 'https://www.compass.com/api',
@@ -119,22 +89,20 @@ describe('FetchproxyTransport', () => {
       headers: { 'X-Test': '1' },
       body: '{"k":1}',
     });
-    const [, , opts] = inner.request.mock.calls[0];
-    expect(opts.headers).toEqual({ 'X-Test': '1' });
-    expect(opts.body).toBe('{"k":1}');
+    expect(inner.fetch).toHaveBeenCalledWith({
+      path: '/api',
+      method: 'POST',
+      headers: { 'X-Test': '1' },
+      body: '{"k":1}',
+    });
   });
 
-  it('requestJson delegates to inner.requestJson with subdomain: www and returns {data, result}', async () => {
+  it('requestJson remaps the method (compass: in init → adapter: positional) and returns {data, result}', async () => {
     const t = new FetchproxyTransport({ version: '0.0.0' });
     const inner = stubInner();
     inner.requestJson.mockResolvedValue({
       data: { n: 42 },
-      result: {
-        ok: true,
-        status: 200,
-        body: '{"n":42}',
-        url: 'https://www.compass.com/api',
-      },
+      result: { status: 200, body: '{"n":42}', url: 'https://www.compass.com/api' },
     });
     installInner(t, inner);
 
@@ -146,16 +114,11 @@ describe('FetchproxyTransport', () => {
     const [method, path, opts] = inner.requestJson.mock.calls[0];
     expect(method).toBe('POST');
     expect(path).toBe('/api');
-    expect(opts.subdomain).toBe('www');
     expect(opts.headers).toEqual({ 'X-Test': '1' });
     expect(opts.body).toEqual({ n: 42 });
     expect(out).toEqual({
       data: { n: 42 },
-      result: {
-        status: 200,
-        body: '{"n":42}',
-        url: 'https://www.compass.com/api',
-      },
+      result: { status: 200, body: '{"n":42}', url: 'https://www.compass.com/api' },
     });
   });
 
@@ -164,12 +127,7 @@ describe('FetchproxyTransport', () => {
     const inner = stubInner();
     inner.requestJson.mockResolvedValue({
       data: null,
-      result: {
-        ok: true,
-        status: 204,
-        body: '',
-        url: 'https://www.compass.com/api',
-      },
+      result: { status: 204, body: '', url: 'https://www.compass.com/api' },
     });
     installInner(t, inner);
 
@@ -180,10 +138,10 @@ describe('FetchproxyTransport', () => {
     expect(out.result.status).toBe(204);
   });
 
-  it('propagates FetchproxyBridgeDownError thrown by inner.request()', async () => {
+  it('propagates FetchproxyBridgeDownError thrown by the inner adapter fetch()', async () => {
     const t = new FetchproxyTransport({ version: '0.0.0' });
     const inner = stubInner();
-    inner.request.mockRejectedValue(
+    inner.fetch.mockRejectedValue(
       new FetchproxyBridgeDownError({
         originalError: 'Receiving end does not exist.',
         retryAttempted: true,
@@ -198,10 +156,10 @@ describe('FetchproxyTransport', () => {
     );
   });
 
-  it('propagates FetchproxyTimeoutError thrown by inner.request()', async () => {
+  it('propagates FetchproxyTimeoutError thrown by the inner adapter fetch()', async () => {
     const t = new FetchproxyTransport({ version: '0.0.0' });
     const inner = stubInner();
-    inner.request.mockRejectedValue(
+    inner.fetch.mockRejectedValue(
       new FetchproxyTimeoutError({
         url: 'https://www.compass.com/slow',
         timeoutMs: 30000,
@@ -214,77 +172,60 @@ describe('FetchproxyTransport', () => {
     );
   });
 
-  it('status() mirrors inner.bridgeHealth() + adapter-owned fields', () => {
-    const t = new FetchproxyTransport({
-      version: '1.2.3',
-      port: 37200,
-      fetchTimeoutMs: 5000,
-    });
-    const inner = stubInner('host');
-    inner.bridgeHealth.mockReturnValue({
-      role: 'host',
-      port: 37200,
-      serverVersion: '1.2.3',
-      fetchTimeoutMs: 5000,
-      bridgeReviveDelayMs: 2_000,
-      lastSuccessAt: 111,
-      lastFailureAt: 222,
-      lastFailureReason: 'boom',
-      consecutiveFailures: 3,
-      lastExtensionMessageAt: 333,
-    });
+  it('runProbe delegates to the inner adapter and returns its BridgeProbeResult', async () => {
+    const t = new FetchproxyTransport({ version: '0.0.0' });
+    const inner = stubInner();
+    const probeResult = {
+      ok: true,
+      elapsed_ms: 12,
+      bridge: {
+        role: 'host',
+        port: 37149,
+        server_version: '0.0.0',
+        fetch_timeout_ms: 30_000,
+        last_success_at: null,
+        last_failure_at: null,
+        last_failure_reason: null,
+        consecutive_failures: 0,
+      },
+    };
+    inner.runProbe.mockResolvedValue(probeResult);
     installInner(t, inner);
 
-    expect(t.status()).toEqual({
-      role: 'host',
-      port: 37200,
-      serverVersion: '1.2.3',
-      fetchTimeoutMs: 5000,
-      lastSuccessAt: 111,
-      lastFailureAt: 222,
-      lastFailureReason: 'boom',
-      consecutiveFailures: 3,
-      lastExtensionMessageAt: 333,
-    });
+    const fetchFn = vi.fn().mockResolvedValue('User-agent: *');
+    const out = await t.runProbe(fetchFn, '/robots.txt');
+    expect(inner.runProbe).toHaveBeenCalledWith(fetchFn, '/robots.txt');
+    expect(out).toEqual(probeResult);
   });
 
-  it('status().fetchTimeoutMs is sourced from bridgeHealth() — not the constructor option (fetchproxy#82)', () => {
-    // Regression guard: the adapter used to mirror opts.fetchTimeoutMs
-    // into a private field and surface that through status(). That
-    // drifted from the server's actual resolved value any time the
-    // server changed its default or applied caller-side validation.
-    // Now status().fetchTimeoutMs comes straight off bridgeHealth().
-    const t = new FetchproxyTransport({
-      version: '1.0.0',
-      fetchTimeoutMs: 5000, // constructor option — ignored by status()
-    });
+  it('status() mirrors the inner adapter status() (bridgeHealth) verbatim', () => {
+    const t = new FetchproxyTransport({ version: '1.2.3' });
     const inner = stubInner('host');
-    inner.bridgeHealth.mockReturnValue({
+    const health = {
       role: 'host',
-      port: 37149,
-      serverVersion: '1.0.0',
-      fetchTimeoutMs: 12_345, // server-resolved value — wins
-      bridgeReviveDelayMs: 2_000,
-      lastSuccessAt: null,
-      lastFailureAt: null,
-      lastFailureReason: null,
-      consecutiveFailures: 0,
-      lastExtensionMessageAt: null,
-    });
+      port: 37200,
+      serverVersion: '1.2.3',
+      fetchTimeoutMs: 5000,
+      lastSuccessAt: 111,
+      lastFailureAt: 222,
+      lastFailureReason: 'boom',
+      consecutiveFailures: 3,
+      lastExtensionMessageAt: 333,
+    };
+    inner.status.mockReturnValue(health);
     installInner(t, inner);
 
-    expect(t.status().fetchTimeoutMs).toBe(12_345);
+    expect(t.status()).toEqual(health);
   });
 
   it('status().role tracks whatever role the inner reports (null pre-listen)', () => {
     const t = new FetchproxyTransport({ version: '1.0.0' });
     const inner = stubInner(null);
-    inner.bridgeHealth.mockReturnValue({
+    inner.status.mockReturnValue({
       role: null,
       port: 37149,
       serverVersion: '1.0.0',
       fetchTimeoutMs: 30_000,
-      bridgeReviveDelayMs: 2_000,
       lastSuccessAt: null,
       lastFailureAt: null,
       lastFailureReason: null,
@@ -295,41 +236,41 @@ describe('FetchproxyTransport', () => {
     expect(t.status().role).toBeNull();
   });
 
-  it('start/close delegate to the inner FetchproxyServer', async () => {
+  it('start/close delegate to the inner adapter', async () => {
     const t = new FetchproxyTransport({ version: '0.0.0' });
     const inner = stubInner();
     installInner(t, inner);
 
     await t.start();
-    expect(inner.listen).toHaveBeenCalledTimes(1);
+    expect(inner.start).toHaveBeenCalledTimes(1);
 
     await t.close();
     expect(inner.close).toHaveBeenCalledTimes(1);
   });
 
-  it('does NOT pass keepAliveIntervalMs explicitly — relies on the 0.10.0 default of 25_000 (fetchproxy#71)', async () => {
-    // 0.10.0 promoted keepAliveIntervalMs to a 25_000 default (the value
-    // compass had been hardcoding), so the adapter no longer forwards it.
-    // Use vi.doMock to swap in a capturing FetchproxyServer subclass,
-    // then dynamically re-import FetchproxyTransport so its module-scope
-    // binding resolves to the patched class.
+  it('constructs the inner adapter with port 37149, compass.com domain, and defaultSubdomain: www', async () => {
+    // The adapter owns FetchproxyServer construction; assert compass passes the
+    // right pins by capturing createFetchproxyTransport's options.
     const seen: Array<Record<string, unknown>> = [];
     vi.resetModules();
-    // src/transport-fetchproxy.ts imports FetchproxyServer via the
-    // @chrischall/mcp-utils/fetchproxy re-export (single import site), so
-    // mock THAT subpath — not the underlying '@fetchproxy/server' — or the
-    // module-scope binding resolves to the real class and the capture misses.
     vi.doMock('@chrischall/mcp-utils/fetchproxy', async () => {
       const actual = await vi.importActual<
         typeof import('@chrischall/mcp-utils/fetchproxy')
       >('@chrischall/mcp-utils/fetchproxy');
-      class Capturing extends actual.FetchproxyServer {
-        constructor(opts: ConstructorParameters<typeof actual.FetchproxyServer>[0]) {
-          seen.push(opts as unknown as Record<string, unknown>);
-          super(opts);
-        }
-      }
-      return { ...actual, FetchproxyServer: Capturing };
+      return {
+        ...actual,
+        createFetchproxyTransport: (opts: Record<string, unknown>) => {
+          seen.push(opts);
+          return {
+            start: vi.fn(),
+            close: vi.fn(),
+            fetch: vi.fn(),
+            requestJson: vi.fn(),
+            runProbe: vi.fn(),
+            status: vi.fn(),
+          };
+        },
+      };
     });
     const { FetchproxyTransport: PatchedTransport } = await import(
       '../src/transport-fetchproxy.js'
@@ -338,6 +279,14 @@ describe('FetchproxyTransport', () => {
     new PatchedTransport({ version: '1.2.3' });
 
     expect(seen).toHaveLength(1);
+    expect(seen[0]).toMatchObject({
+      port: 37149,
+      serverName: 'compass-mcp',
+      version: '1.2.3',
+      domains: ['compass.com'],
+      defaultSubdomain: 'www',
+    });
+    // 0.10.0 default of 25_000 — not forwarded explicitly (fetchproxy#71).
     expect(seen[0]).not.toHaveProperty('keepAliveIntervalMs');
 
     vi.doUnmock('@chrischall/mcp-utils/fetchproxy');
