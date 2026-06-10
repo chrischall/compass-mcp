@@ -25,6 +25,7 @@ import {
 } from '@chrischall/mcp-utils';
 import type {
   BridgeStatus,
+  BridgeProbeResult,
   FetchResult,
   CompassTransport,
 } from './transport.js';
@@ -141,6 +142,19 @@ export class CompassClient {
   /** Diagnostic snapshot of the active bridge — surfaced by `compass_healthcheck`. */
   bridgeStatus(): BridgeStatus {
     return this.transport.status();
+  }
+
+  /**
+   * Run one healthcheck probe through the active bridge. Delegates to the
+   * transport's `runProbe` (the @fetchproxy/server probe loop + classification
+   * + post-probe bridge projection). `compass_healthcheck` drives this via
+   * `registerBridgeHealthcheckTool`.
+   */
+  runProbe(
+    fetchFn: (path: string) => Promise<unknown>,
+    probePath: string
+  ): Promise<BridgeProbeResult> {
+    return this.transport.runProbe(fetchFn, probePath);
   }
 
   /**

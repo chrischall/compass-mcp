@@ -9,6 +9,17 @@
 // client, not the transport — every implementation only has to round-
 // trip the request and return a {status, body, url} triple.
 
+// `BridgeProbeResult` is @fetchproxy/server's typed result of one
+// healthcheck probe (run fetch + measure + classify + project
+// bridgeHealth() into a snake-cased `bridge` block). Re-exported via the
+// mcp-utils /fetchproxy subpath (single import site). `compass_healthcheck`
+// consumes it through `registerBridgeHealthcheckTool`.
+import type {
+  BridgeHealth,
+  BridgeProbeResult,
+} from '@chrischall/mcp-utils/fetchproxy';
+export type { BridgeProbeResult };
+
 export interface FetchInit {
   /** Path-and-query relative to https://www.compass.com, e.g.
    *  `/homedetails/<slug>/<sha>_lid/` or `/homes-for-sale/<slug>/`. */
@@ -28,27 +39,16 @@ export interface FetchResult {
   url: string;
 }
 
-/** Diagnostic snapshot returned by `CompassTransport.status()`. */
-export interface BridgeStatus {
-  /** Role the underlying server elected (host vs peer). `null` until `start()` resolves. */
-  role: 'host' | 'peer' | null;
-  /** The WebSocket port. Hosts bind it; peers tunnel through it. */
-  port: number;
-  /** MCP server version announced to the extension. */
-  serverVersion: string;
-  /** Default per-request timeout in ms. */
-  fetchTimeoutMs: number;
-  /** Unix-ms timestamp of the last successful round-trip. `null` until the first success. */
-  lastSuccessAt: number | null;
-  /** Unix-ms timestamp of the last failed round-trip. `null` until the first failure. */
-  lastFailureAt: number | null;
-  /** Short message describing the most recent failure. `null` until the first failure. */
-  lastFailureReason: string | null;
-  /** Number of failures since the last success (or since process start, if none). */
-  consecutiveFailures: number;
-  /** Unix-ms of the most recent inner frame from the extension (0.8.0+). `null` until first frame. */
-  lastExtensionMessageAt: number | null;
-}
+/**
+ * Diagnostic snapshot returned by `CompassTransport.status()`. This IS
+ * @fetchproxy/server's `BridgeHealth` (role / port / serverVersion /
+ * fetchTimeoutMs / freshness counters / lastExtensionMessageAt, plus the
+ * keepAlive + swEviction observability blocks) — the value the
+ * `createFetchproxyTransport` adapter returns verbatim. Aliased here so
+ * compass's interface + tools have a single name for it without re-declaring
+ * the fields (which drifted from the upstream shape when hand-maintained).
+ */
+export type BridgeStatus = BridgeHealth;
 
 /**
  * Parsed-JSON round-trip returned by `CompassTransport.requestJson()`.
@@ -93,6 +93,18 @@ export interface CompassTransport {
       body?: unknown;
     }
   ): Promise<RequestJsonResult<T>>;
+
+  /**
+   * Run one healthcheck probe through the bridge: execute `fetchFn(probePath)`,
+   * measure elapsed ms, classify any thrown bridge error, and project the
+   * post-probe `bridgeHealth()` snapshot. The probe loop + classification live
+   * in `@fetchproxy/server`'s `runProbe`; `compass_healthcheck` owns only the
+   * tool registration + hint ladder (via `registerBridgeHealthcheckTool`).
+   */
+  runProbe(
+    fetchFn: (path: string) => Promise<unknown>,
+    probePath: string
+  ): Promise<BridgeProbeResult>;
 
   /** Diagnostic snapshot of the bridge. Safe to call any time. */
   status(): BridgeStatus;
