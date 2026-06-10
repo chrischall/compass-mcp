@@ -39,7 +39,7 @@ const DEFAULT_STATUS: BridgeStatus = {
     lazyReviveSuccesses: 0,
     lastEvictionDetectedAt: null,
   },
-} as unknown as BridgeStatus;
+};
 
 /**
  * Build a stub CompassClient whose `runProbe` faithfully mirrors

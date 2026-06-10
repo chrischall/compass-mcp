@@ -58,8 +58,12 @@ export class FetchproxyTransport implements CompassTransport {
   // thin class so the CompassTransport interface (consumed by CompassClient
   // and the session tools) stays stable.
   private readonly inner: FetchproxyTransportAdapter;
+  private readonly port: number;
+  private readonly version: string;
 
   constructor(opts: FetchproxyTransportOptions) {
+    this.port = opts.port ?? DEFAULT_PORT;
+    this.version = opts.version;
     this.inner = createFetchproxyTransport({
       port: opts.port ?? DEFAULT_PORT,
       serverName: opts.server ?? 'compass-mcp',
@@ -84,8 +88,16 @@ export class FetchproxyTransport implements CompassTransport {
     });
   }
 
-  start(): Promise<void> {
-    return this.inner.start();
+  async start(): Promise<void> {
+    await this.inner.start();
+    // Restore the unconditional bootstrap banner the hand-rolled transport
+    // emitted (mcp-utils' adapter only logs behind its debugEnvVar). stderr
+    // only — stdout is the MCP JSON-RPC channel. Role is `unknown` until the
+    // first verb binds the port + elects.
+    console.error(
+      `[compass-mcp:bridge] listening on 127.0.0.1:${this.port} ` +
+        `(role=${this.inner.role ?? 'unknown'}, version=${this.version})`,
+    );
   }
 
   close(): Promise<void> {
