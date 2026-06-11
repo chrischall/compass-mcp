@@ -1,5 +1,9 @@
 # compass-mcp
 
+[![CI](https://github.com/chrischall/compass-mcp/actions/workflows/ci.yml/badge.svg)](https://github.com/chrischall/compass-mcp/actions/workflows/ci.yml)
+[![npm](https://img.shields.io/npm/v/compass-mcp)](https://www.npmjs.com/package/compass-mcp)
+[![license](https://img.shields.io/npm/l/compass-mcp)](LICENSE)
+
 Compass real-estate access as an MCP server for Claude — search listings, fetch property details, photo galleries, price history, and run affordability/mortgage math, all via natural language.
 
 > ⚠️ Compass does not publish a public consumer API. This server scrapes the same server-rendered HTML compass.com itself ships to your browser, routed through your own signed-in browser tab via the [fetchproxy](https://github.com/chrischall/fetchproxy) extension. Every request acts on behalf of your existing session — your cookies, your TLS, your JS context — exactly as if you'd clicked it in the browser yourself. Treat this as informal use of Compass's website. Use at your own discretion.
