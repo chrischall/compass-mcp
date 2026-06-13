@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.11.5](https://github.com/chrischall/compass-mcp/compare/v0.11.4...v0.11.5) (2026-06-13)
+
+
+### Bug Fixes
+
+* bot PRs bypass the CI gate unconditionally ([#124](https://github.com/chrischall/compass-mcp/issues/124)) ([6b5472f](https://github.com/chrischall/compass-mcp/commit/6b5472f3bfeb470b478ae6366802a3f8a0ed0ff5))
+
+
+### Documentation
+
+* add MIT LICENSE file and README badges ([#121](https://github.com/chrischall/compass-mcp/issues/121)) ([fa32746](https://github.com/chrischall/compass-mcp/commit/fa3274663a19c4ff931f5be09c6a41e3fb8040cf))
+
 ## [0.11.4](https://github.com/chrischall/compass-mcp/compare/v0.11.3...v0.11.4) (2026-06-10)
 
 
