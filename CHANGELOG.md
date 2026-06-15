@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.11.6](https://github.com/chrischall/compass-mcp/compare/v0.11.5...v0.11.6) (2026-06-15)
+
+
+### Documentation
+
+* audit CLAUDE.md and add auto-review follow-up convention ([#132](https://github.com/chrischall/compass-mcp/issues/132)) ([f272c12](https://github.com/chrischall/compass-mcp/commit/f272c120bd1bebcaec9411934ccba212e249bc0f))
+* fix .env.example to reference compass, not zillow/redfin ([#134](https://github.com/chrischall/compass-mcp/issues/134)) ([c63d376](https://github.com/chrischall/compass-mcp/commit/c63d3761287a577c86079d94fc414826c6263fb7))
+* require Conventional Commit PR titles for release-please ([#128](https://github.com/chrischall/compass-mcp/issues/128)) ([ac7d0ea](https://github.com/chrischall/compass-mcp/commit/ac7d0ea0830cb02d1ced0da4be942fef6fe4f320))
+
 ## [0.11.5](https://github.com/chrischall/compass-mcp/compare/v0.11.4...v0.11.5) (2026-06-13)
 
 
