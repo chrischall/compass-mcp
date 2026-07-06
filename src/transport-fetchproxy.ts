@@ -60,7 +60,7 @@ export class FetchproxyTransport implements CompassTransport {
   // listening …` banner via `logListening: true`), and the fetch /
   // requestJson / runProbe verb passthroughs (each with `defaultSubdomain:
   // 'www'` applied). We keep this thin class so the CompassTransport interface
-  // (consumed by CompassClient and the session tools) stays stable.
+  // (consumed by CompassClient) stays stable.
   private readonly inner: FetchproxyTransportAdapter;
 
   constructor(opts: FetchproxyTransportOptions) {

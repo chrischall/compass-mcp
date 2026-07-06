@@ -27,8 +27,9 @@ This is a "Pattern A" fetchproxy MCP (every call rides through fetchproxy), not 
 | `compass_resolve_addresses` | `tools/resolve-addresses.ts` | Bulk `get_by_address` — concurrent server-side resolution of many addresses, one round trip, shared rung walker + per-row error contract | read |
 | `compass_get_agent_listings` | `tools/agent-listings.ts` | `GET /agents/<slug>/` SSR — extract `window.__AGENT_PROFILE__.data.agentProfileProps.activeListingsProps.initialSales[]` (+ `closedDealsProps.initialSales[].listing` when `include_closed`) | read |
 | `compass_healthcheck` | `tools/healthcheck.ts` | Round-trips a no-op `GET /robots.txt` through the bridge to confirm bridge + extension + tab are responsive | read |
-| `compass_get_session_context` | `tools/session.ts` | Lists every registered session + the active session id | read |
-| `compass_set_active_session` | `tools/session.ts` | Flips which registered session answers future requests | read |
+| `compass_get_session_context` | `tools/session.ts` | (local; shared session registry) — list all registered logical sessions + `active_session_id` | read |
+| `compass_register_session` | `tools/session.ts` | (local; shared session registry) — register/refresh a session keyed by `account_identity` (required); optional `auth_expires_at`; `mark_active` (default false) registers-and-activates | write (registry) |
+| `compass_set_active_session` | `tools/session.ts` | (local; shared session registry) — switch the active logical session by `session_id` | write (registry) |
 
 ## Architecture
 
@@ -65,7 +66,12 @@ src/
     agent-listings.ts   # compass_get_agent_listings (/agents/<slug>/ __AGENT_PROFILE__ → active + closed listings)
     healthcheck.ts      # compass_healthcheck — thin wiring of mcp-utils'
                         #   registerBridgeHealthcheckTool (probe loop + hint ladder + result shape live there)
-    session.ts          # compass_get_session_context + compass_set_active_session
+    session.ts          # compass_get_session_context / register_session /
+                        #   set_active_session — thin wrapper over the shared
+                        #   registerSessionTools from @chrischall/mcp-utils/session
+                        #   (registry built via createSessionRegistry in index.ts;
+                        #   bridge health lives in compass_healthcheck, not in
+                        #   session rows)
 
 tests/                  # mirrors src/ (incl. tests/tools/*), plus tests/helpers.ts harness,
                         #   features.test.ts, and version-sync.test.ts (asserts every

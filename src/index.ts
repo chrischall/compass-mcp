@@ -20,7 +20,8 @@
 // the fleet-wide `runMcp` from `@chrischall/mcp-utils` — compass keeps
 // only what's compass-specific: the transport/client construction (which
 // must come first) and the registrar list.
-import { runMcp } from '@chrischall/mcp-utils';
+import { runMcp, readPortEnv } from '@chrischall/mcp-utils';
+import { createSessionRegistry } from '@chrischall/mcp-utils/session';
 import { CompassClient } from './client.js';
 import { FetchproxyTransport } from './transport-fetchproxy.js';
 import { registerSearchTools } from './tools/search.js';
@@ -41,15 +42,21 @@ import { registerAgentListingsTools } from './tools/agent-listings.js';
 
 const VERSION = '0.11.6'; // x-release-please-version
 
-const port = process.env.COMPASS_WS_PORT
-  ? Number(process.env.COMPASS_WS_PORT)
-  : undefined;
+// Hardened port read (trim; blank / 'null' / 'undefined' / unsubstituted
+// `${...}` placeholders / junk / out-of-range all fall back to the default
+// 37149 instead of handing NaN to the WS server).
+const port = readPortEnv('COMPASS_WS_PORT', 37149);
 
 const transport = new FetchproxyTransport({ port, version: VERSION });
 
 const client = new CompassClient({ transport });
 // Bring the WS bridge up before stdio connects (runMcp does the connect).
 await client.start();
+
+// The session registry is process-local bookkeeping surfaced by the
+// compass_*_session tool trio. Constructed here (not in a registrar) so a
+// single instance is shared for the life of the process.
+const sessions = createSessionRegistry();
 
 await runMcp<CompassClient>({
   name: 'compass-mcp',
@@ -68,12 +75,12 @@ await runMcp<CompassClient>({
     registerByAddressTools,
     registerBulkGetTools,
     registerResolveAddressesTools,
-    registerSessionTools,
+    (server) => registerSessionTools(server, sessions),
     registerComparableRentalsTools,
     registerAgentListingsTools,
   ],
   banner:
-    `[compass-mcp] v${VERSION} — WebSocket bridge via @fetchproxy/server on 127.0.0.1:${port ?? 37149}. ` +
+    `[compass-mcp] v${VERSION} — WebSocket bridge via @fetchproxy/server on 127.0.0.1:${port}. ` +
     'Install the fetchproxy extension (see https://github.com/chrischall/fetchproxy) ' +
     'and sign into compass.com. This project was developed and is maintained by AI (Claude). ' +
     'Use at your own discretion.',
