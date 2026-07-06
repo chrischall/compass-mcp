@@ -30,22 +30,6 @@ import type {
   CompassTransport,
 } from './transport.js';
 
-/**
- * Public-facing summary of a registered Compass session. Returned from
- * `client.listSessions()` and surfaced by `compass_get_session_context`.
- *
- * Today the single-session case (one signed-in compass.com tab via the
- * fetchproxy bridge) is the only one we support — `sessions[]` will
- * have a single entry whose `sessionId` matches `activeSessionId`. The
- * shape is forward-compatible for multi-session support (#41): each
- * registered transport gets its own row + a session_id, and one is
- * designated active.
- */
-export interface RegisteredSession {
-  sessionId: string;
-  status: BridgeStatus;
-}
-
 // The canonical parameterized SessionNotAuthenticatedError lives in
 // @chrischall/mcp-utils; re-exported so existing `./client.js`
 // importers keep working. Thrown below as
@@ -60,86 +44,28 @@ export interface CompassClientOptions {
 }
 
 export class CompassClient {
-  // Session registry. Today this is initialized with a single entry —
-  // the one transport passed to the constructor. The shape supports
-  // multi-session futures (#41) where additional transports get
-  // registered under fresh session_ids. The active session always
-  // answers every request unless a per-call routing hint matches
-  // another session (not implemented yet — Compass's auth lives in
-  // the browser tab, not in a token we can route on).
-  private readonly sessions = new Map<string, CompassTransport>();
-  private activeSessionId: string;
-  private nextSessionSeq = 1;
+  // The ONE transport this client rides. Logical multi-session tracking
+  // (#41/#42) lives in the fleet-shared SessionRegistry from
+  // `@chrischall/mcp-utils/session` (constructed in index.ts, surfaced by
+  // the `compass_*_session` tools) — it's a labelled-context layer, not a
+  // transport multiplexer: the physical fetchproxy bridge routes to
+  // whichever browser tab the extension is bound to right now, same as
+  // the zillow/redfin/homes siblings.
+  private readonly transport: CompassTransport;
 
   constructor(opts: CompassClientOptions) {
-    this.activeSessionId = this.allocateSessionId();
-    this.sessions.set(this.activeSessionId, opts.transport);
-  }
-
-  private allocateSessionId(): string {
-    const id = `session-${this.nextSessionSeq}`;
-    this.nextSessionSeq += 1;
-    return id;
-  }
-
-  private get transport(): CompassTransport {
-    // Should never miss — `activeSessionId` is always one of the keys
-    // by construction.
-    const t = this.sessions.get(this.activeSessionId);
-    if (!t) {
-      throw new Error(
-        `CompassClient: active session "${this.activeSessionId}" is not in the registry. This is a bug.`
-      );
-    }
-    return t;
-  }
-
-  /**
-   * Register an additional transport under a freshly-allocated
-   * `session_id`. Returns the id. Does NOT change which session is
-   * active — call `setActiveSession()` separately if needed.
-   */
-  registerSession(transport: CompassTransport): string {
-    const id = this.allocateSessionId();
-    this.sessions.set(id, transport);
-    return id;
-  }
-
-  /** Make `id` the active session. Throws when `id` isn't registered. */
-  setActiveSession(id: string): void {
-    if (!this.sessions.has(id)) {
-      throw new Error(
-        `unknown session: ${id}. Known: ${[...this.sessions.keys()].join(', ')}`
-      );
-    }
-    this.activeSessionId = id;
-  }
-
-  /** Currently-active session id. */
-  getActiveSessionId(): string {
-    return this.activeSessionId;
-  }
-
-  /** Snapshot of every registered session with its bridge status. */
-  listSessions(): RegisteredSession[] {
-    return [...this.sessions.entries()].map(([sessionId, transport]) => ({
-      sessionId,
-      status: transport.status(),
-    }));
+    this.transport = opts.transport;
   }
 
   async start(): Promise<void> {
-    // Asymmetry intentional: start() only the active transport; registerSession() during run is future scaffolding, close() being symmetric across all sessions is intentional.
     await this.transport.start();
   }
 
   async close(): Promise<void> {
-    // Close every registered transport so multi-session futures don't
-    // leak ports.
-    await Promise.all([...this.sessions.values()].map((t) => t.close()));
+    await this.transport.close();
   }
 
-  /** Diagnostic snapshot of the active bridge — surfaced by `compass_healthcheck`. */
+  /** Diagnostic snapshot of the bridge — surfaced by `compass_healthcheck`. */
   bridgeStatus(): BridgeStatus {
     return this.transport.status();
   }

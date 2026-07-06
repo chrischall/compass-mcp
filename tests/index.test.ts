@@ -14,6 +14,8 @@ import { registerPhotosTools } from '../src/tools/photos.js';
 import { registerHealthcheckTools } from '../src/tools/healthcheck.js';
 import { registerByAddressTools } from '../src/tools/by-address.js';
 import { registerAgentListingsTools } from '../src/tools/agent-listings.js';
+import { registerSessionTools } from '../src/tools/session.js';
+import { createSessionRegistry } from '@chrischall/mcp-utils/session';
 import { createTestHarness } from './helpers.js';
 
 const mockClient = {
@@ -34,6 +36,9 @@ const EXPECTED_TOOLS = [
   'compass_healthcheck',
   'compass_get_by_address',
   'compass_get_agent_listings',
+  'compass_register_session',
+  'compass_set_active_session',
+  'compass_get_session_context',
 ];
 
 let harness: Awaited<ReturnType<typeof createTestHarness>>;
@@ -55,6 +60,7 @@ describe('tool registration', () => {
       registerHealthcheckTools(server, mockClient);
       registerByAddressTools(server, mockClient);
       registerAgentListingsTools(server, mockClient);
+      registerSessionTools(server, createSessionRegistry());
     });
     const tools = await harness.listTools();
     const names = tools.map((t) => t.name).sort();

@@ -1,113 +1,144 @@
-import { describe, it, expect, vi, beforeEach, afterAll } from 'vitest';
-import type { CompassClient } from '../../src/client.js';
-import type { BridgeStatus } from '../../src/transport.js';
+/**
+ * Session tool trio (#41, #42) — now the fleet-shared `registerSessionTools`
+ * from `@chrischall/mcp-utils/session`, bound to the `compass` prefix via the
+ * thin wrapper in `src/tools/session.ts` (same migration as the
+ * zillow/redfin/homes siblings).
+ *
+ * BREAKING vs. the hand-rolled registry: sessions are registered by callers
+ * (keyed by `account_identity`) instead of being seeded from the boot
+ * transport, and the per-row BridgeHealth projection (role/port/
+ * server_version/fetch_timeout_ms/failure counters) moved to
+ * `compass_healthcheck` — bridge health is a property of the ONE physical
+ * fetchproxy bridge, not of a labelled logical session. The top-level
+ * `{ active_session_id, sessions: [...] }` context shape is retained, and the
+ * migration gains `compass_register_session`.
+ *
+ * The compass-mcp transport physically bridges to ONE fetchproxy extension at
+ * a time; the registry is a labelled-context layer on top.
+ */
+import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import {
+  createSessionRegistry,
+  type SessionRegistry,
+} from '@chrischall/mcp-utils/session';
 import { registerSessionTools } from '../../src/tools/session.js';
 import { createTestHarness, parseToolResult } from '../helpers.js';
 
-function makeBridgeStatus(overrides: Partial<BridgeStatus> = {}): BridgeStatus {
-  return {
-    role: 'host',
-    port: 37149,
-    serverVersion: '0.7.0',
-    fetchTimeoutMs: 30_000,
-    lastSuccessAt: null,
-    lastFailureAt: null,
-    lastFailureReason: null,
-    consecutiveFailures: 0,
-    ...overrides,
-  };
-}
+let h: Awaited<ReturnType<typeof createTestHarness>>;
+let registry: SessionRegistry;
 
-const mockBridgeStatus = vi.fn();
-const mockClient = {
-  bridgeStatus: mockBridgeStatus,
-  listSessions: vi.fn(),
-  getActiveSessionId: vi.fn(),
-  setActiveSession: vi.fn(),
-} as unknown as CompassClient;
+beforeEach(async () => {
+  registry = createSessionRegistry();
+  h = await createTestHarness((server) =>
+    registerSessionTools(server, registry)
+  );
+});
 
-let harness: Awaited<ReturnType<typeof createTestHarness>>;
-beforeEach(() => vi.clearAllMocks());
-afterAll(async () => {
-  if (harness) await harness.close();
+afterEach(async () => {
+  await h.close();
 });
 
 describe('compass_get_session_context', () => {
-  it('setup', async () => {
-    harness = await createTestHarness((server) =>
-      registerSessionTools(server, mockClient)
-    );
+  it('starts empty — no sessions, null active id', async () => {
+    const r = await h.callTool('compass_get_session_context', {});
+    const parsed = parseToolResult<{
+      active_session_id: string | null;
+      sessions: Array<{ session_id: string; account_identity: string }>;
+    }>(r);
+    expect(parsed.sessions).toHaveLength(0);
+    expect(parsed.active_session_id).toBeNull();
   });
 
-  it('lists all registered sessions + the active_session_id (#42)', async () => {
-    const sessions = [
-      { sessionId: 'session-1', status: makeBridgeStatus({ role: 'host' }) },
-      { sessionId: 'session-2', status: makeBridgeStatus({ role: 'peer', port: 37150 }) },
-    ];
-    (mockClient.listSessions as ReturnType<typeof vi.fn>).mockReturnValue(sessions);
-    (mockClient.getActiveSessionId as ReturnType<typeof vi.fn>).mockReturnValue('session-1');
-
-    const r = await harness.callTool('compass_get_session_context', {});
-    expect(r.isError).toBeFalsy();
+  it('lists registered sessions with their identities (#42)', async () => {
+    const first = registry.register({ account_identity: 'me@example.com' });
+    registry.register({ account_identity: 'partner@example.com' });
+    const r = await h.callTool('compass_get_session_context', {});
     const parsed = parseToolResult<{
-      active_session_id: string;
-      sessions: Array<{ session_id: string; role: string; port: number }>;
+      active_session_id: string | null;
+      sessions: Array<{ session_id: string; account_identity: string }>;
     }>(r);
-    expect(parsed.active_session_id).toBe('session-1');
     expect(parsed.sessions).toHaveLength(2);
-    expect(parsed.sessions.map((s) => s.session_id)).toEqual(['session-1', 'session-2']);
-    expect(parsed.sessions[0].role).toBe('host');
-    expect(parsed.sessions[1].role).toBe('peer');
+    expect(parsed.sessions.map((s) => s.account_identity)).toEqual([
+      'me@example.com',
+      'partner@example.com',
+    ]);
+    // First registered wins the active pointer.
+    expect(parsed.active_session_id).toBe(first.session_id);
+  });
+});
+
+describe('compass_register_session', () => {
+  it('adds a session keyed by account_identity', async () => {
+    const r = await h.callTool('compass_register_session', {
+      account_identity: 'work@example.com',
+    });
+    const parsed = parseToolResult<{
+      session: { session_id: string; account_identity: string };
+      active_session_id: string | null;
+    }>(r);
+    expect(parsed.session.session_id).toBeTruthy();
+    expect(parsed.session.account_identity).toBe('work@example.com');
+    // First registered becomes active.
+    expect(parsed.active_session_id).toBe(parsed.session.session_id);
+    expect(registry.getContext().sessions).toHaveLength(1);
   });
 
-  it('reduces cleanly to a one-entry sessions[] for the single-session case', async () => {
-    (mockClient.listSessions as ReturnType<typeof vi.fn>).mockReturnValue([
-      { sessionId: 'session-1', status: makeBridgeStatus() },
-    ]);
-    (mockClient.getActiveSessionId as ReturnType<typeof vi.fn>).mockReturnValue('session-1');
+  it('honours mark_active: true to register AND activate in one call', async () => {
+    // Seed an existing active session so mark_active has to flip the pointer.
+    const first = registry.register({ account_identity: 'first@example.com' });
+    expect(registry.activeSessionId()).toBe(first.session_id);
 
-    const r = await harness.callTool('compass_get_session_context', {});
+    const r = await h.callTool('compass_register_session', {
+      account_identity: 'second@example.com',
+      mark_active: true,
+    });
     const parsed = parseToolResult<{
-      active_session_id: string;
-      sessions: Array<{ session_id: string }>;
+      session: { session_id: string };
+      active_session_id: string | null;
     }>(r);
-    expect(parsed.active_session_id).toBe('session-1');
-    expect(parsed.sessions).toHaveLength(1);
-    expect(parsed.sessions[0].session_id).toBe('session-1');
+    expect(parsed.active_session_id).toBe(parsed.session.session_id);
+    expect(registry.activeSessionId()).toBe(parsed.session.session_id);
+  });
+
+  it('without mark_active, the prior active session is preserved', async () => {
+    const first = registry.register({ account_identity: 'first@example.com' });
+    const r = await h.callTool('compass_register_session', {
+      account_identity: 'second@example.com',
+    });
+    const parsed = parseToolResult<{
+      session: { session_id: string };
+      active_session_id: string | null;
+    }>(r);
+    expect(parsed.active_session_id).toBe(first.session_id);
+    expect(parsed.session.session_id).not.toBe(first.session_id);
+  });
+
+  it('rejects a missing account_identity', async () => {
+    const r = await h.callTool('compass_register_session', {});
+    expect(r.isError).toBeTruthy();
   });
 });
 
 describe('compass_set_active_session', () => {
-  it('forwards the session id to client.setActiveSession and echoes the new active (#41)', async () => {
-    (mockClient.setActiveSession as ReturnType<typeof vi.fn>).mockImplementation(
-      (id: string) => {
-        (mockClient.getActiveSessionId as ReturnType<typeof vi.fn>).mockReturnValue(id);
-      }
-    );
-    (mockClient.listSessions as ReturnType<typeof vi.fn>).mockReturnValue([
-      { sessionId: 'session-1', status: makeBridgeStatus() },
-      { sessionId: 'session-2', status: makeBridgeStatus({ role: 'peer' }) },
-    ]);
-    const r = await harness.callTool('compass_set_active_session', {
-      session_id: 'session-2',
+  it('switches the active session (#41)', async () => {
+    registry.register({ account_identity: 'first@example.com' });
+    const second = registry.register({
+      account_identity: 'second@example.com',
     });
-    expect(r.isError).toBeFalsy();
+    const r = await h.callTool('compass_set_active_session', {
+      session_id: second.session_id,
+    });
     const parsed = parseToolResult<{ active_session_id: string }>(r);
-    expect(parsed.active_session_id).toBe('session-2');
-    expect(mockClient.setActiveSession).toHaveBeenCalledWith('session-2');
+    expect(parsed.active_session_id).toBe(second.session_id);
+    expect(registry.activeSessionId()).toBe(second.session_id);
   });
 
-  it('throws a clear error for an unknown session_id', async () => {
-    (mockClient.setActiveSession as ReturnType<typeof vi.fn>).mockImplementation(
-      () => {
-        throw new Error('unknown session: session-99');
-      }
-    );
-    const r = await harness.callTool('compass_set_active_session', {
-      session_id: 'session-99',
+  it('returns an error for an unknown session id', async () => {
+    const r = await h.callTool('compass_set_active_session', {
+      session_id: 'sess_nonexistent',
     });
     expect(r.isError).toBeTruthy();
     const text = (r.content[0] as { text: string }).text;
-    expect(text).toMatch(/unknown session/i);
+    expect(text).toMatch(/unknown session_id/i);
   });
 });
