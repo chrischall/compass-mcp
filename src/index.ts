@@ -40,7 +40,7 @@ import { registerSessionTools } from './tools/session.js';
 import { registerComparableRentalsTools } from './tools/comparable-rentals.js';
 import { registerAgentListingsTools } from './tools/agent-listings.js';
 
-const VERSION = '0.11.6'; // x-release-please-version
+const VERSION = '0.11.7'; // x-release-please-version
 
 // Hardened port read (trim; blank / 'null' / 'undefined' / unsubstituted
 // `${...}` placeholders / junk / out-of-range all fall back to the default
