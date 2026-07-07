@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.11.7](https://github.com/chrischall/compass-mcp/compare/v0.11.6...v0.11.7) (2026-07-07)
+
+
+### Bug Fixes
+
+* bump @chrischall/mcp-utils to 0.12.0 ([#145](https://github.com/chrischall/compass-mcp/issues/145)) ([f8e5f82](https://github.com/chrischall/compass-mcp/commit/f8e5f829f71af66b0ef076b3c2f36cfaf17b23ff))
+
+
+### Refactor
+
+* adopt shared session registry from mcp-utils/session ([#142](https://github.com/chrischall/compass-mcp/issues/142)) ([08be59a](https://github.com/chrischall/compass-mcp/commit/08be59aaaa7fdc2403b11e31af3e4d62ee39148c))
+
 ## [0.11.6](https://github.com/chrischall/compass-mcp/compare/v0.11.5...v0.11.6) (2026-06-15)
 
 
