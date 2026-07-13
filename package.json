@@ -26,9 +26,9 @@
   "files": [
     "dist",
     ".claude-plugin",
+    "skills",
     ".mcp.json",
-    "server.json",
-    "SKILL.md"
+    "server.json"
   ],
   "scripts": {
     "build": "tsc --noEmit && npm run bundle",
