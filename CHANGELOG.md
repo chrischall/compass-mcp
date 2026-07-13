@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.12.0](https://github.com/chrischall/compass-mcp/compare/v0.11.7...v0.12.0) (2026-07-13)
+
+
+### Features
+
+* **skill:** add compass fpx access skill ([#150](https://github.com/chrischall/compass-mcp/issues/150)) ([ff2c4f7](https://github.com/chrischall/compass-mcp/commit/ff2c4f790a64d4bc9b47cc4c66ad68c990ec8c79))
+
+
+### Refactor
+
+* **skill:** move root SKILL.md into skills/, point plugin.json at ./skills/ ([#151](https://github.com/chrischall/compass-mcp/issues/151)) ([201c20d](https://github.com/chrischall/compass-mcp/commit/201c20dc27b5286c25e53e973f15f65f8911bb77))
+
 ## [0.11.7](https://github.com/chrischall/compass-mcp/compare/v0.11.6...v0.11.7) (2026-07-07)
 
 
