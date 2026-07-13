@@ -16,7 +16,7 @@ fully server-rendered React app that embeds each page's data as JSON inside
 an inline `<script>` global (`global.uc`, `window.__INITIAL_DATA__`,
 `window.__AGENT_PROFILE__`). compass.com also runs **AWS WAF**, which 403s
 plain `curl`/Node requests on some paths regardless of headers. `fpx` routes
-every request through the user's own signed-in browser tab (the Transporter
+every request through the user's own signed-in browser tab (the fetchproxy
 extension), which already carries a cleared WAF session, so the page renders
 normally — you then pull the JSON out of the HTML yourself.
 
@@ -31,10 +31,10 @@ search/listing/agent data and the address-typeahead endpoint are all public.
 ```sh
 npm install -g @fetchproxy/cli              # provides `fpx`
 fpx profile add compass --domain compass.com
-fpx pair -p compass                          # prints a pair code → approve in Transporter
+fpx pair -p compass                          # prints a pair code → approve in the fetchproxy extension
 ```
 
-Requirements: the **Transporter** browser extension installed, an open
+Requirements: the **fetchproxy** browser extension installed, an open
 `www.compass.com` tab, and its Chrome **Site access** allowing `compass.com`.
 Pairing persists — after the first approval every later `fpx` call reuses it.
 
