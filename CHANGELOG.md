@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.12.1](https://github.com/chrischall/compass-mcp/compare/v0.12.0...v0.12.1) (2026-07-19)
+
+
+### Documentation
+
+* replace duplicated fleet policy with a pointer ([#154](https://github.com/chrischall/compass-mcp/issues/154)) ([ab6f0f1](https://github.com/chrischall/compass-mcp/commit/ab6f0f1c99fefcac862bd78234cb3a477ccef824))
+
 ## [0.12.0](https://github.com/chrischall/compass-mcp/compare/v0.11.7...v0.12.0) (2026-07-13)
 
 
