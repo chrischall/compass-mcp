@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.12.2](https://github.com/chrischall/compass-mcp/compare/v0.12.1...v0.12.2) (2026-07-30)
+
+
+### Bug Fixes
+
+* **deps:** bump @fetchproxy/* to 1.7.0 and @chrischall/mcp-utils to 0.14.0 ([#164](https://github.com/chrischall/compass-mcp/issues/164)) ([68fb58a](https://github.com/chrischall/compass-mcp/commit/68fb58aba07a674707f7c24e3636b29f2261b6df))
+
 ## [0.12.1](https://github.com/chrischall/compass-mcp/compare/v0.12.0...v0.12.1) (2026-07-19)
 
 
