@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.12.3](https://github.com/chrischall/compass-mcp/compare/v0.12.2...v0.12.3) (2026-08-06)
+
+
+### Bug Fixes
+
+* **deps:** move to @fetchproxy/server 2.0.0 for the v3 handshake ([#172](https://github.com/chrischall/compass-mcp/issues/172)) ([c7e70da](https://github.com/chrischall/compass-mcp/commit/c7e70da1a2f17307b588db21a9d5b89f3eec150c))
+
 ## [0.12.2](https://github.com/chrischall/compass-mcp/compare/v0.12.1...v0.12.2) (2026-07-30)
 
 
