@@ -1,5 +1,5 @@
 ---
-name: compass-mcp
+name: compass
 description: Look up real-estate listings, property details, photos, price history, and resolve addresses on Compass via MCP. Triggers on phrases like "find homes on compass in", "compass property details for", "compass photos for", "compass price history for", "resolve this address on compass", "compare these compass listings", "what does compass say about", or any request involving Compass properties, prices, or comparisons. Requires compass-mcp installed and the fetchproxy extension active (see Setup below).
 ---
 
