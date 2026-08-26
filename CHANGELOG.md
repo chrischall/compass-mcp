@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.12.4](https://github.com/chrischall/compass-mcp/compare/v0.12.3...v0.12.4) (2026-08-26)
+
+
+### Documentation
+
+* **skill:** declare the name this skill actually publishes under ([#183](https://github.com/chrischall/compass-mcp/issues/183)) ([89d7289](https://github.com/chrischall/compass-mcp/commit/89d7289fe3d1cbb4300392f9f5d981262c6a352a))
+
 ## [0.12.3](https://github.com/chrischall/compass-mcp/compare/v0.12.2...v0.12.3) (2026-08-06)
 
 
