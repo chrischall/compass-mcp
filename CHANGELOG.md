@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.12.5](https://github.com/chrischall/compass-mcp/compare/v0.12.4...v0.12.5) (2026-08-28)
+
+
+### Bug Fixes
+
+* **egress:** declare only the hosts the server process dials in mint.yaml ([#186](https://github.com/chrischall/compass-mcp/issues/186)) ([e73650f](https://github.com/chrischall/compass-mcp/commit/e73650f3fee12fccf63b244dfd89c36993ca8239))
+
 ## [0.12.4](https://github.com/chrischall/compass-mcp/compare/v0.12.3...v0.12.4) (2026-08-26)
 
 
