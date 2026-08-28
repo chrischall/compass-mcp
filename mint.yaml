@@ -30,8 +30,15 @@ state:
     start mints a fresh identity and re-prompts pairing in the browser; the
     API refuses bridge without it.
 egress:
-  allow:
-    # Only hosts the SERVER process actually fetches. Hosts that appear
-    # solely in a URL this server BUILDS and returns are excluded.
-    - compass.com
-    - www.compass.com
+  # Only hosts the SERVER process actually fetches. Hosts that appear
+  # solely in a URL this server BUILDS and returns are excluded.
+  #
+  # This server has ONE mode, the browser bridge: every request goes
+  # through CompassTransport.fetch -> @fetchproxy/server, and the
+  # user's signed-in tab dials compass.com / www.compass.com. The
+  # process itself opens only the loopback concentrator port, so those
+  # hosts are NOT dials by the process and do not belong here. There is
+  # no direct, bootstrap or anonymous mode. The `https://www.compass.com`
+  # strings in src/ (by-address.ts, search.ts, photos.ts, ...) only
+  # build URLs that are returned in tool results.
+  allow: []
