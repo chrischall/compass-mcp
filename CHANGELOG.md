@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.13.0](https://github.com/chrischall/compass-mcp/compare/v0.12.5...v0.13.0) (2026-08-29)
+
+
+### Features
+
+* **deps:** take @fetchproxy/server 2.2.0 so the concentrator can bind its sandbox address ([#188](https://github.com/chrischall/compass-mcp/issues/188)) ([fb9d756](https://github.com/chrischall/compass-mcp/commit/fb9d756afe3b2a8ea935c9b1ba108a924f373138))
+
 ## [0.12.5](https://github.com/chrischall/compass-mcp/compare/v0.12.4...v0.12.5) (2026-08-28)
 
 
