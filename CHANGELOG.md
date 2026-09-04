@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.14.0](https://github.com/chrischall/compass-mcp/compare/v0.13.0...v0.14.0) (2026-09-04)
+
+
+### Features
+
+* **tools:** compact by default — strip media URLs, and minify every response ([#202](https://github.com/chrischall/compass-mcp/issues/202)) ([5f131b0](https://github.com/chrischall/compass-mcp/commit/5f131b0a1cd7dcdb42b83a58527c036ee47e711f))
+
+
+### Bug Fixes
+
+* **deps:** pick up @chrischall/mcp-utils 0.23.2 ([#206](https://github.com/chrischall/compass-mcp/issues/206)) ([a0d304b](https://github.com/chrischall/compass-mcp/commit/a0d304b68ea6b62b8540073838e4452b0701242b))
+
 ## [0.13.0](https://github.com/chrischall/compass-mcp/compare/v0.12.5...v0.13.0) (2026-08-29)
 
 
