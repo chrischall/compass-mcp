@@ -1041,4 +1041,92 @@ describe('compass_get_by_address tool', () => {
       expect(parsed.error).toMatch(/no listing matched/i);
     });
   });
+
+  /**
+   * `view` was wired here first, and the auto-review's finding (#203) was that
+   * this tool has NOTHING to strip: its result is a resolution receipt
+   * — `{resolved, url, listing_id_sha, pid, address, matched_via}` — with no
+   * media field anywhere in it. These cases are a canary: if a future change
+   * surfaces a CDN URL through this tool, the "identical in both rungs" case
+   * fails and forces the keep-vs-drop decision to be made deliberately in
+   * `src/view.ts`.
+   */
+  describe('view (issue #203)', () => {
+    const resolve = (view?: string) => {
+      mockFetchJson.mockResolvedValueOnce(
+        omnisuggest([
+          {
+            text: '126 Sleeping Bear Ln',
+            subText: 'Lake Lure, NC',
+            id: '1887095624271872617',
+          },
+        ])
+      );
+      return harness.callTool('compass_get_by_address', {
+        address: '126 Sleeping Bear Ln',
+        city: 'Lake Lure',
+        state: 'NC',
+        ...(view ? { view } : {}),
+      });
+    };
+
+    it('defaults to compact and returns the same receipt as full', async () => {
+      const compact = parseToolResult<Record<string, unknown>>(await resolve());
+      const full = parseToolResult<Record<string, unknown>>(await resolve('full'));
+      expect(compact).toEqual(full);
+      // Non-vacuous: the receipt it says are equal is a real, resolved one.
+      expect(compact.resolved).toBe(true);
+      expect(compact.listing_id_sha).toBe('1887095624271872617');
+      expect(compact.matched_via).toBe('typeahead');
+      expect(compact.url).toBe(
+        'https://www.compass.com/homedetails/1887095624271872617_lid/'
+      );
+    });
+
+    it('does not change the echoed address, in either rung', async () => {
+      // `address` is echoed back from the caller's own input. The collapse of
+      // runs of whitespace is `formatAddressLine`'s, and it happens UPSTREAM
+      // of the view layer — so both rungs must show the same normalized
+      // string. Minification drops whitespace between JSON tokens, never
+      // inside a value, and a rung that disagreed with the other about what
+      // the caller asked for would be the worst kind of size optimization.
+      // (The byte-identical-value case proper is pinned in `tests/view.test.ts`
+      // and on `compass_search_properties`, whose payload carries free text.)
+      const messy = '126  Sleeping\tBear Ln';
+      mockFetchJson.mockResolvedValueOnce(omnisuggest([]));
+      mockFetchHtml.mockResolvedValue(searchHtml([]));
+      const compact = parseToolResult<{ address: string }>(
+        await harness.callTool('compass_get_by_address', { address: messy })
+      );
+      mockFetchJson.mockResolvedValueOnce(omnisuggest([]));
+      const full = parseToolResult<{ address: string }>(
+        await harness.callTool('compass_get_by_address', {
+          address: messy,
+          view: 'full',
+        })
+      );
+      expect(compact.address).toBe('126 Sleeping Bear Ln');
+      expect(full.address).toBe(compact.address);
+    });
+
+    it('emits a single line of JSON', async () => {
+      const r = await resolve();
+      const text = (r.content[0] as { text: string }).text;
+      expect(text).not.toContain('\n');
+    });
+
+    it('rejects a rung this server does not honour', async () => {
+      // `raw` is a real rung elsewhere in the fleet's vocabulary; this server
+      // does not implement it, and accepting it would mean silently answering
+      // in some other rung than the caller asked for.
+      const r = await harness.callTool('compass_get_by_address', {
+        address: '126 Sleeping Bear Ln',
+        view: 'raw',
+      });
+      expect(r.isError).toBeTruthy();
+      // The schema rejects before any lookup, so no request is spent.
+      expect(mockFetchJson).not.toHaveBeenCalled();
+      expect(mockFetchHtml).not.toHaveBeenCalled();
+    });
+  });
 });

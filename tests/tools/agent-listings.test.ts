@@ -252,4 +252,83 @@ describe('compass_get_agent_listings tool', () => {
     const parsed = parseToolResult<{ active_listings: unknown[] }>(r);
     expect(parsed.active_listings).toEqual([]);
   });
+
+  /**
+   * `view` was wired here first, and the auto-review's finding (#203) was that
+   * this tool has NOTHING to strip: `format()` emits no photo or thumbnail
+   * field. That is worth asserting rather than assuming — the tests below are
+   * a canary. If someone later surfaces a CDN URL through `format()`, the
+   * "identical in both rungs" case fails and forces the `keep`-vs-`drop`
+   * decision to be made deliberately in `src/view.ts`, instead of a media
+   * field silently appearing in every compact response (or, worse, a
+   * deliberately-derived field silently vanishing from one).
+   */
+  describe('view (issue #203)', () => {
+    it('defaults to compact and returns the same payload as full', async () => {
+      mockFetchHtml.mockResolvedValueOnce(agentProfileHtml(agentProfileData));
+      const compact = parseToolResult<Record<string, unknown>>(
+        await harness.callTool('compass_get_agent_listings', {
+          slug: 'paige-mcguirk',
+          include_closed: true,
+        })
+      );
+      mockFetchHtml.mockResolvedValueOnce(agentProfileHtml(agentProfileData));
+      const full = parseToolResult<Record<string, unknown>>(
+        await harness.callTool('compass_get_agent_listings', {
+          slug: 'paige-mcguirk',
+          include_closed: true,
+          view: 'full',
+        })
+      );
+      expect(compact).toEqual(full);
+      // Non-vacuous: the payload it says are equal is a real one.
+      expect((compact.active_listings as unknown[]).length).toBe(2);
+      expect((compact.closed_deals as unknown[]).length).toBe(1);
+    });
+
+    it('keeps every substantive listing field under compact', async () => {
+      // Compact is subtractive — it removes known media, it does not project
+      // onto a field allowlist. This repo has no verified record of Compass's
+      // payload shape, so an allowlist would hand back records with holes in
+      // them that read like a verified answer.
+      mockFetchHtml.mockResolvedValueOnce(agentProfileHtml(agentProfileData));
+      const parsed = parseToolResult<{
+        agent: { name: string; slug: string };
+        active_listings: Array<Record<string, unknown>>;
+      }>(
+        await harness.callTool('compass_get_agent_listings', {
+          slug: 'paige-mcguirk',
+        })
+      );
+      expect(parsed.agent).toEqual({
+        name: 'Paige McGuirk',
+        slug: 'paige-mcguirk',
+      });
+      const first = parsed.active_listings[0];
+      expect(first.listing_id_sha).toBe('sha-active-1');
+      expect(first.address).toBe('1 Active Rd');
+      expect(first.beds).toBe(3);
+      expect(first.baths).toBe(2);
+      expect(first.sqft).toBe(1800);
+      expect(first.price).toBe(1_200_000);
+    });
+
+    it('emits a single line of JSON', async () => {
+      mockFetchHtml.mockResolvedValueOnce(agentProfileHtml(agentProfileData));
+      const r = await harness.callTool('compass_get_agent_listings', {
+        slug: 'paige-mcguirk',
+      });
+      const text = (r.content[0] as { text: string }).text;
+      expect(text).not.toContain('\n');
+    });
+
+    it('rejects a rung this server does not honour', async () => {
+      const r = await harness.callTool('compass_get_agent_listings', {
+        slug: 'paige-mcguirk',
+        view: 'raw',
+      });
+      expect(r.isError).toBeTruthy();
+      expect(mockFetchHtml).not.toHaveBeenCalled();
+    });
+  });
 });

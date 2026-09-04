@@ -9,7 +9,6 @@ import {
   SUFFIX_PAIRS,
 } from '@chrischall/realty-core';
 import type { CompassClient } from '../client.js';
-import { minifiedResult } from '../mcp.js';
 import { viewArg, viewResponse } from '../view.js';
 import { extractUc } from '../page-state.js';
 import { extractPidFromUrl, locationToSlug } from '../url.js';
