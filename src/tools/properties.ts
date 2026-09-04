@@ -1,7 +1,7 @@
 import { z } from 'zod';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import type { CompassClient } from '../client.js';
-import { textResult } from '../mcp.js';
+import { minifiedResult } from '../mcp.js';
 import { extractInitialData } from '../page-state.js';
 import { extractAgentSlug, extractPidFromUrl, urlToPath } from '../url.js';
 import { compassListingUrl } from './by-address.js';
@@ -752,7 +752,7 @@ export function registerPropertyTools(
         url,
         listing_id_sha,
       });
-      return textResult(
+      return minifiedResult(
         format(listing, { includeDescription: include_description })
       );
     }

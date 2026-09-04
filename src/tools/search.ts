@@ -1,7 +1,7 @@
 import { z } from 'zod';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import type { CompassClient } from '../client.js';
-import { textResult } from '../mcp.js';
+import { minifiedResult } from '../mcp.js';
 import { extractUc } from '../page-state.js';
 import { extractPidFromUrl, locationToSlug } from '../url.js';
 
@@ -348,7 +348,7 @@ export function registerSearchTools(
       // advertise a cursor we cannot honor.
       const hasMore = consumed < formattedPage.length;
 
-      return textResult({
+      return minifiedResult({
         search_path: path,
         total_items: totalItems,
         count: results.length,

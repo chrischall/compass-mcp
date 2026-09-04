@@ -7,7 +7,7 @@ import {
   retryOnceOnTimeout,
 } from '@chrischall/mcp-utils/fetchproxy';
 import type { CompassClient } from '../client.js';
-import { textResult } from '../mcp.js';
+import { minifiedResult } from '../mcp.js';
 import {
   fetchListingRecord,
   format,
@@ -165,7 +165,7 @@ export function registerBulkGetTools(
           return row;
         }
       );
-      return textResult({
+      return minifiedResult({
         count: rows.length,
         rows,
       });

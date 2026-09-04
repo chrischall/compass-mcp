@@ -5,7 +5,7 @@ import {
   type AffordabilityInput,
   type AffordabilityResult,
 } from '@chrischall/realty-core';
-import { textResult } from '../mcp.js';
+import { minifiedResult } from '../mcp.js';
 
 /**
  * Local-only affordability calculator. Solves for max home price under
@@ -58,6 +58,6 @@ export function registerAffordabilityTools(server: McpServer): void {
         back_end_dti: z.number().min(0).max(1).optional(),
       },
     },
-    async (i) => textResult(computeAffordability(i as AffordabilityInput))
+    async (i) => minifiedResult(computeAffordability(i as AffordabilityInput))
   );
 }

@@ -5,7 +5,7 @@ import {
   type MortgageInput,
   type MortgageBreakdown,
 } from '@chrischall/realty-core';
-import { textResult } from '../mcp.js';
+import { minifiedResult } from '../mcp.js';
 
 /**
  * Local-only mortgage / PITI calculator. No network — fully
@@ -104,6 +104,6 @@ export function registerMortgageTools(server: McpServer): void {
       },
     },
     async (i) =>
-      textResult(toCompassMortgage(calculateMortgage(i as MortgageInput)))
+      minifiedResult(toCompassMortgage(calculateMortgage(i as MortgageInput)))
   );
 }
