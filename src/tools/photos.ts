@@ -1,7 +1,7 @@
 import { z } from 'zod';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import type { CompassClient } from '../client.js';
-import { textResult } from '../mcp.js';
+import { minifiedResult } from '../mcp.js';
 import { extractPidFromUrl } from '../url.js';
 import { fetchListingRecord, type RawListing } from './properties.js';
 
@@ -109,7 +109,7 @@ export function registerPhotosTools(
       const photos = raw
         .map(formatPhoto)
         .filter((p): p is FormattedPhoto => p !== null);
-      return textResult({
+      return minifiedResult({
         listing_id_sha: listing.listingIdSHA,
         // `pid` is the stable short ID (from navigationPageLink's
         // `_pid/` form) — survives re-listings; the `listing_id_sha`

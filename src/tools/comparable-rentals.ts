@@ -1,7 +1,7 @@
 import { z } from 'zod';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import type { CompassClient } from '../client.js';
-import { textResult } from '../mcp.js';
+import { minifiedResult } from '../mcp.js';
 import { extractUc } from '../page-state.js';
 import { fetchListingRecord } from './properties.js';
 import {
@@ -77,7 +77,7 @@ export function registerComparableRentalsTools(
       const locationSeed =
         loc.zipCode ?? (cityState || loc.prettyAddress) ?? '';
       if (!locationSeed) {
-        return textResult({
+        return minifiedResult({
           target: {
             listing_id_sha: listing.listingIdSHA,
             city: loc.city,
@@ -106,7 +106,7 @@ export function registerComparableRentalsTools(
         // target would).
         .filter((h) => h.listing_id_sha !== listing.listingIdSHA)
         .slice(0, limit ?? 20);
-      return textResult({
+      return minifiedResult({
         target: {
           listing_id_sha: listing.listingIdSHA,
           city: loc.city,

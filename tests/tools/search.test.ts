@@ -450,4 +450,205 @@ describe('compass_search_properties tool', () => {
     const text = (r.content[0] as { text: string }).text;
     expect(text).toMatch(/could not extract the uc state/);
   });
+
+  /**
+   * `view` on the one tool in this server that actually carries media.
+   *
+   * This is the tool the rollout missed: `compass_get_agent_listings` and
+   * `compass_get_by_address` were wired, and neither emits a media field, so
+   * `view` was present exactly where it did nothing and absent exactly where
+   * it mattered. A search page returns ~41 listings and each one used to carry
+   * two Compass CDN URLs a model can neither see nor fetch.
+   */
+  describe('view (issue #203)', () => {
+    /** A listing whose media URLs are of BOTH shapes the strip must handle. */
+    const withMedia = () =>
+      ucHtml(
+        [
+          {
+            listing: {
+              listingIdSHA: '1',
+              pageLink: '/homedetails/a/1_lid/',
+              title: '$1,000,000',
+              subtitles: ['1 Main', 'Park Slope'],
+              media: [
+                {
+                  // Ends in an image extension.
+                  originalUrl: 'https://cdn.compass.com/i/1.jpg',
+                  thumbnailUrl: 'https://cdn.compass.com/t/1.jpg',
+                },
+              ],
+            },
+          },
+          {
+            listing: {
+              listingIdSHA: '2',
+              pageLink: '/homedetails/b/2_lid/',
+              title: '$2,000,000',
+              subtitles: ['2 Main', 'Park Slope'],
+              media: [
+                {
+                  // Extension-less and signed. The library's VALUE rule cannot
+                  // see this one, which is why view.ts drops these two keys by
+                  // NAME rather than relying on the URL's shape.
+                  originalUrl: 'https://cdn.compass.com/i/abc?sig=xyz',
+                  thumbnailUrl: 'https://cdn.compass.com/t/abc?sig=xyz',
+                },
+              ],
+            },
+          },
+        ],
+        2
+      );
+
+    interface Result {
+      listing_id_sha: string;
+      address?: string;
+      primary_photo_url?: string;
+      primary_thumbnail_url?: string;
+    }
+
+    it('strips both media URLs from every listing by default', async () => {
+      // Compact is the DEFAULT: a caller who has never heard of `view` gets
+      // the smaller payload. An efficiency that has to be requested is one
+      // that is usually not.
+      mockFetchHtml.mockResolvedValueOnce(withMedia());
+      const r = await harness.callTool('compass_search_properties', {
+        location: 'x',
+      });
+      const parsed = parseToolResult<{ results: Result[] }>(r);
+      for (const listing of parsed.results) {
+        expect(listing.primary_photo_url).toBeUndefined();
+        expect(listing.primary_thumbnail_url).toBeUndefined();
+      }
+      // Everything a caller acts on survives — compact removes the pictures,
+      // not the listing.
+      expect(parsed.results.map((x) => x.listing_id_sha)).toEqual(['1', '2']);
+      expect(parsed.results.map((x) => x.address)).toEqual(['1 Main', '2 Main']);
+    });
+
+    it('strips the extension-less URL exactly like the .jpg one', async () => {
+      // The regression this pins. Left to the library's built-in rules the
+      // `.jpg` listing would lose its media and the signed one would keep it —
+      // in the SAME response. A projection whose effect depends on the shape
+      // of a URL is one a caller cannot reason about.
+      mockFetchHtml.mockResolvedValueOnce(withMedia());
+      const r = await harness.callTool('compass_search_properties', {
+        location: 'x',
+      });
+      const text = (r.content[0] as { text: string }).text;
+      expect(text).not.toContain('cdn.compass.com');
+    });
+
+    it('returns both media URLs under view: "full"', async () => {
+      // `full` has to be a true escape hatch, or the parameter is decoration.
+      mockFetchHtml.mockResolvedValueOnce(withMedia());
+      const r = await harness.callTool('compass_search_properties', {
+        location: 'x',
+        view: 'full',
+      });
+      const parsed = parseToolResult<{ results: Result[] }>(r);
+      expect(parsed.results[0].primary_photo_url).toBe(
+        'https://cdn.compass.com/i/1.jpg'
+      );
+      expect(parsed.results[0].primary_thumbnail_url).toBe(
+        'https://cdn.compass.com/t/1.jpg'
+      );
+      expect(parsed.results[1].primary_photo_url).toBe(
+        'https://cdn.compass.com/i/abc?sig=xyz'
+      );
+      expect(parsed.results[1].primary_thumbnail_url).toBe(
+        'https://cdn.compass.com/t/abc?sig=xyz'
+      );
+    });
+
+    it('reports identical paging state in both rungs', async () => {
+      // `view` is applied over the ASSEMBLED payload, after the slice. If it
+      // were applied per-listing before paging, or if the strip reached the
+      // paging scalars, a compact caller and a full caller would disagree
+      // about how many listings exist — the one thing a size optimization
+      // must never change.
+      const listings = mkListings(1, 10);
+      mockFetchHtml.mockResolvedValueOnce(ucHtml(listings, 99));
+      const compact = parseToolResult<Record<string, unknown>>(
+        await harness.callTool('compass_search_properties', {
+          location: 'x',
+          limit: 4,
+        })
+      );
+      mockFetchHtml.mockResolvedValueOnce(ucHtml(listings, 99));
+      const full = parseToolResult<Record<string, unknown>>(
+        await harness.callTool('compass_search_properties', {
+          location: 'x',
+          limit: 4,
+          view: 'full',
+        })
+      );
+      for (const key of [
+        'search_path',
+        'total_items',
+        'count',
+        'offset',
+        'next_offset',
+      ]) {
+        expect(compact[key]).toEqual(full[key]);
+      }
+      expect(compact.count).toBe(4);
+      expect(compact.next_offset).toBe(4);
+    });
+
+    it('keeps a listing description byte-identical, blank lines and all', async () => {
+      // Minification drops whitespace BETWEEN tokens, never whitespace inside
+      // a value. A listing's prose paragraphing is the author's, and a
+      // "minified" response that reflowed it would corrupt exactly the
+      // payloads this exists to shrink.
+      const description = "Sun-drenched corner unit.\n\n  Chef's kitchen.\n\tParking included.";
+      mockFetchHtml.mockResolvedValueOnce(
+        ucHtml(
+          [
+            {
+              listing: {
+                listingIdSHA: '1',
+                pageLink: '/h/1/',
+                // `subtitles[1]` becomes `neighborhood`, which is the nearest
+                // free-text field a search card carries.
+                subtitles: ['1 Main', description],
+              },
+            },
+          ],
+          1
+        )
+      );
+      const r = await harness.callTool('compass_search_properties', {
+        location: 'x',
+      });
+      const parsed = parseToolResult<{ results: Array<{ neighborhood: string }> }>(r);
+      expect(parsed.results[0].neighborhood).toBe(description);
+    });
+
+    it('emits a single line of JSON', async () => {
+      // Asserted on the serialized text, because it is the wire form and not
+      // the parsed object that costs the caller. Pretty-printing 41 listings
+      // is pure indentation tokens.
+      mockFetchHtml.mockResolvedValueOnce(ucHtml(mkListings(1, 5), 5));
+      const r = await harness.callTool('compass_search_properties', {
+        location: 'x',
+      });
+      const text = (r.content[0] as { text: string }).text;
+      expect(text).not.toContain('\n');
+    });
+
+    it('rejects a rung this server does not honour', async () => {
+      // `raw` is a real rung elsewhere in the fleet's vocabulary. This server
+      // does not implement it, and accepting it would mean silently answering
+      // in some other rung than the caller asked for.
+      const r = await harness.callTool('compass_search_properties', {
+        location: 'x',
+        view: 'raw',
+      });
+      expect(r.isError).toBeTruthy();
+      // The schema rejects before the fetch, so no request is spent.
+      expect(mockFetchHtml).not.toHaveBeenCalled();
+    });
+  });
 });

@@ -7,7 +7,7 @@ import {
   retryOnceOnTimeout,
 } from '@chrischall/mcp-utils/fetchproxy';
 import type { CompassClient } from '../client.js';
-import { textResult } from '../mcp.js';
+import { minifiedResult } from '../mcp.js';
 import { extractPidFromUrl } from '../url.js';
 import {
   buildAddressQuery,
@@ -180,7 +180,7 @@ export function registerResolveAddressesTools(
         BRIDGE_CONCURRENCY,
         (a) => resolveOne(client, a)
       );
-      return textResult({
+      return minifiedResult({
         count: rows.length,
         rows,
       });

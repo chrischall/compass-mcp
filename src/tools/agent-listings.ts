@@ -1,7 +1,7 @@
 import { z } from 'zod';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import type { CompassClient } from '../client.js';
-import { textResult } from '../mcp.js';
+import { viewArg, viewResponse } from '../view.js';
 import { extractAgentProfile } from '../page-state.js';
 import { extractAgentSlug } from '../url.js';
 import { format, type RawListing } from './properties.js';
@@ -124,6 +124,7 @@ export function registerAgentListingsTools(
         openWorldHint: true,
       },
       inputSchema: {
+        view: viewArg(),
         slug: z
           .string()
           .optional()
@@ -144,7 +145,7 @@ export function registerAgentListingsTools(
           ),
       },
     },
-    async ({ slug, profile_url, include_closed }) => {
+    async ({ slug, profile_url, include_closed, view }) => {
       const ref = slug ?? profile_url;
       if (!ref) {
         throw new Error(
@@ -178,7 +179,7 @@ export function registerAgentListingsTools(
       if (include_closed) {
         payload.closed_deals = findClosedDeals(data).map((l) => format(l));
       }
-      return textResult(payload);
+      return viewResponse(view, payload);
     }
   );
 }

@@ -1,9 +1,9 @@
 import { z } from 'zod';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import type { CompassClient } from '../client.js';
-import { textResult } from '../mcp.js';
 import { extractUc } from '../page-state.js';
 import { extractPidFromUrl, locationToSlug } from '../url.js';
+import { viewArg, viewResponse } from '../view.js';
 
 /**
  * Compass's search results are server-rendered from
@@ -259,7 +259,8 @@ export function registerSearchTools(
         `${COMPASS_PAGE_SIZE} listings) is reachable through this primitive. \`offset\` is honored WITHIN that page, and \`next_offset\` is emitted only when more listings remain within it — it is never a false cursor that re-fetches page 1. ` +
         'TO REACH BEYOND THE FIRST PAGE, narrow with `price_min` / `price_max` / `beds_min`/`beds_max` to bucket the result set into <~' +
         `${COMPASS_PAGE_SIZE}-listing bands (price-banding), then search each band. ` +
-        "Returns each matching listing's address, price, beds/baths, sqft, primary photo URL, lat/lng, the Compass homedetails URL (`_lid/` form, content-addressed by `listing_id_sha`), and the stable `_pid/` URL via `property_url` and the surfaced `pid` field. " +
+        "Returns each matching listing's address, price, beds/baths, sqft, lat/lng, the Compass homedetails URL (`_lid/` form, content-addressed by `listing_id_sha`), and the stable `_pid/` URL via `property_url` and the surfaced `pid` field. " +
+        'The per-listing `primary_photo_url` / `primary_thumbnail_url` are omitted in the default `compact` view (they are Compass CDN URLs a model cannot see); pass `view: "full"` to get them, or `compass_get_property_photos` for the whole gallery. ' +
         "USE `pid`/`_pid/` FOR LONG-LIVED REFERENCES (trackers, sheets, bookmarks) — sha-based `_lid/` URLs change when a property is delisted and relisted. Use the sha-based URL to fetch the current listing record. Read-only; safe to call repeatedly.",
       annotations: {
         title: 'Search Compass listings',
@@ -268,6 +269,7 @@ export function registerSearchTools(
         openWorldHint: true,
       },
       inputSchema: {
+        view: viewArg(),
         location: z
           .string()
           .describe(
@@ -348,7 +350,11 @@ export function registerSearchTools(
       // advertise a cursor we cannot honor.
       const hasMore = consumed < formattedPage.length;
 
-      return textResult({
+      // `view` is applied LAST, over the assembled payload, so the paging
+      // scalars a caller needs (`count`, `offset`, `next_offset`) are computed
+      // from the full result set and are identical in both rungs. Compact only
+      // ever removes the per-listing media URLs.
+      return viewResponse(input.view, {
         search_path: path,
         total_items: totalItems,
         count: results.length,

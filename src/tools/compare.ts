@@ -7,7 +7,7 @@ import {
   retryOnceOnTimeout,
 } from '@chrischall/mcp-utils/fetchproxy';
 import type { CompassClient } from '../client.js';
-import { textResult } from '../mcp.js';
+import { minifiedResult } from '../mcp.js';
 import {
   fetchListingRecord,
   format,
@@ -192,7 +192,7 @@ export function registerCompareTools(
         results: rows,
       };
       if (include_summary === true) body.summary = buildSummary(rows);
-      return textResult(body);
+      return minifiedResult(body);
     }
   );
 }

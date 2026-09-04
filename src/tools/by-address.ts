@@ -9,7 +9,7 @@ import {
   SUFFIX_PAIRS,
 } from '@chrischall/realty-core';
 import type { CompassClient } from '../client.js';
-import { textResult } from '../mcp.js';
+import { viewArg, viewResponse } from '../view.js';
 import { extractUc } from '../page-state.js';
 import { extractPidFromUrl, locationToSlug } from '../url.js';
 import { findLolResults } from './search.js';
@@ -510,6 +510,7 @@ export function registerByAddressTools(
         openWorldHint: true,
       },
       inputSchema: {
+        view: viewArg(),
         address: z
           .string()
           .min(1)
@@ -531,7 +532,7 @@ export function registerByAddressTools(
           error: outcome.error,
           address: addressLine,
         };
-        return textResult(result);
+        return viewResponse(input.view, result);
       }
       const { listing, matched_via } = outcome;
       const result: ByAddressResolved = {
@@ -542,7 +543,7 @@ export function registerByAddressTools(
         address: addressLine,
         matched_via,
       };
-      return textResult(result);
+      return viewResponse(input.view, result);
     }
   );
 }
