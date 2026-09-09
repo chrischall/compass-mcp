@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.14.1](https://github.com/chrischall/compass-mcp/compare/v0.14.0...v0.14.1) (2026-09-09)
+
+
+### Bug Fixes
+
+* **deps:** bump hono from 4.13.0 to 4.13.7 ([#216](https://github.com/chrischall/compass-mcp/issues/216)) ([fc4ee81](https://github.com/chrischall/compass-mcp/commit/fc4ee8147c480e1c931276f7996d9abb07686323))
+* **deps:** require @fetchproxy/server ^2.7.0, the first that reads FETCHPROXY_IDENTITY_DIR ([#214](https://github.com/chrischall/compass-mcp/issues/214)) ([3ef366d](https://github.com/chrischall/compass-mcp/commit/3ef366d202fce3faa02a66fe817d1f028b5470df))
+
 ## [0.14.0](https://github.com/chrischall/compass-mcp/compare/v0.13.0...v0.14.0) (2026-09-04)
 
 
