@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.14.2](https://github.com/chrischall/compass-mcp/compare/v0.14.1...v0.14.2) (2026-09-10)
+
+
+### Bug Fixes
+
+* **deps:** @fetchproxy/server 2.10.0 and @chrischall/mcp-utils 0.26.1 ([#219](https://github.com/chrischall/compass-mcp/issues/219)) ([6758ef2](https://github.com/chrischall/compass-mcp/commit/6758ef2c6a80610ed62650d0f94fe1771f8eb996))
+* **deps:** take @fetchproxy/server 2.9.1 so a pairing prompt survives ([#217](https://github.com/chrischall/compass-mcp/issues/217)) ([dab01ea](https://github.com/chrischall/compass-mcp/commit/dab01ea03a289eb1b98950374c755d5d8d3c6828))
+
 ## [0.14.1](https://github.com/chrischall/compass-mcp/compare/v0.14.0...v0.14.1) (2026-09-09)
 
 
