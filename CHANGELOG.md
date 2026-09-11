@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.14.3](https://github.com/chrischall/compass-mcp/compare/v0.14.2...v0.14.3) (2026-09-11)
+
+
+### Bug Fixes
+
+* **deps:** @fetchproxy/server 2.11.3, so the hosted extension pin persists ([#221](https://github.com/chrischall/compass-mcp/issues/221)) ([525b192](https://github.com/chrischall/compass-mcp/commit/525b19241586accbc42078f54d8a038f2aa4e91e))
+
 ## [0.14.2](https://github.com/chrischall/compass-mcp/compare/v0.14.1...v0.14.2) (2026-09-10)
 
 
