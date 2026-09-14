@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.14.3](https://github.com/chrischall/compass-mcp/compare/v0.14.2...v0.14.3) (2026-09-14)
+
+
+### Bug Fixes
+
+* **deps:** @fetchproxy/server 2.11.3, so the hosted extension pin persists ([#221](https://github.com/chrischall/compass-mcp/issues/221)) ([525b192](https://github.com/chrischall/compass-mcp/commit/525b19241586accbc42078f54d8a038f2aa4e91e))
+* **deps:** @fetchproxy/server 3.0.0 — protocol v4 (forward secrecy, AAD over the frame) ([#225](https://github.com/chrischall/compass-mcp/issues/225)) ([570a974](https://github.com/chrischall/compass-mcp/commit/570a974abb661ead4933e1ed449f5b8d2d409d7b))
+* **deps:** bump zod in the production-dependencies group ([#224](https://github.com/chrischall/compass-mcp/issues/224)) ([96a552e](https://github.com/chrischall/compass-mcp/commit/96a552e9f016be1e09d6cca9092c0bb28a6e5f03))
+
 ## [0.14.2](https://github.com/chrischall/compass-mcp/compare/v0.14.1...v0.14.2) (2026-09-10)
 
 
