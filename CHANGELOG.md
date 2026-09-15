@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.14.4](https://github.com/chrischall/compass-mcp/compare/v0.14.3...v0.14.4) (2026-09-15)
+
+
+### Bug Fixes
+
+* **deps:** @fetchproxy/server 3.0.1 — capped peer frames, logged load drops, atomic identity writes ([#226](https://github.com/chrischall/compass-mcp/issues/226)) ([891886b](https://github.com/chrischall/compass-mcp/commit/891886bce81acbbb68b4fbee064e3a8ae604f83f))
+
 ## [0.14.3](https://github.com/chrischall/compass-mcp/compare/v0.14.2...v0.14.3) (2026-09-14)
 
 
