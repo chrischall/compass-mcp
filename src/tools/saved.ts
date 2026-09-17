@@ -1,6 +1,6 @@
 import type { McpServer } from '@modelcontextprotocol/server';
 import type { CompassClient } from '../client.js';
-import { z } from "zod";
+import { z } from 'zod';
 
 /**
  * Compass account surfaces (favorites + saved searches) are a known
