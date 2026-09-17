@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
+import type { McpServer } from '@modelcontextprotocol/server';
 import type { CompassClient } from '../client.js';
 import { minifiedResult } from '../mcp.js';
 import { extractPidFromUrl } from '../url.js';
@@ -169,7 +169,7 @@ export function registerHistoryTools(
         idempotentHint: true,
         openWorldHint: true,
       },
-      inputSchema: {
+      inputSchema: z.object({
         url: z
           .string()
           .optional()
@@ -182,7 +182,7 @@ export function registerHistoryTools(
           .describe(
             'Compass listing identifier. Sufficient on its own — the tool resolves the address slug internally via site search before fetching.'
           ),
-      },
+      }),
     },
     async ({ url, listing_id_sha }) => {
       const { listing } = await fetchListingRecord(client, {

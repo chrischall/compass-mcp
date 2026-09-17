@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
+import type { McpServer } from '@modelcontextprotocol/server';
 import {
   BRIDGE_CONCURRENCY,
   classifyRowError,
@@ -97,7 +97,7 @@ export function registerCompareTools(
         idempotentHint: true,
         openWorldHint: true,
       },
-      inputSchema: {
+      inputSchema: z.object({
         targets: z
           .array(
             z
@@ -134,7 +134,7 @@ export function registerCompareTools(
           .describe(
             'Include the pivoted `summary` table (one row per compared field, one column per listing). Defaults to `false` — `results[].property.*` already carries every fact and the summary was roughly 30% of response weight. Useful only for human-readable rendering.'
           ),
-      },
+      }),
     },
     async ({ targets, include_description, include_summary }) => {
       const ts = targets as CompareTarget[];

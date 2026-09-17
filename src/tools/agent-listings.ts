@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
+import type { McpServer } from '@modelcontextprotocol/server';
 import type { CompassClient } from '../client.js';
 import { viewArg, viewResponse } from '../view.js';
 import { extractAgentProfile } from '../page-state.js';
@@ -123,7 +123,7 @@ export function registerAgentListingsTools(
         idempotentHint: true,
         openWorldHint: true,
       },
-      inputSchema: {
+      inputSchema: z.object({
         view: viewArg(),
         slug: z
           .string()
@@ -143,7 +143,7 @@ export function registerAgentListingsTools(
           .describe(
             "Include the agent's closed/sold deals as a `closed_deals` array. Defaults to `false` to keep the response lean."
           ),
-      },
+      }),
     },
     async ({ slug, profile_url, include_closed, view }) => {
       const ref = slug ?? profile_url;
