@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
+import type { McpServer } from '@modelcontextprotocol/server';
 import type { CompassClient } from '../client.js';
 import { extractUc } from '../page-state.js';
 import { extractPidFromUrl, locationToSlug } from '../url.js';
@@ -268,7 +268,7 @@ export function registerSearchTools(
         idempotentHint: true,
         openWorldHint: true,
       },
-      inputSchema: {
+      inputSchema: z.object({
         view: viewArg(),
         location: z
           .string()
@@ -299,7 +299,7 @@ export function registerSearchTools(
           .describe(
             'Zero-based offset into the reachable first SSR page. Honored only within that page (#87); use the `next_offset` value from a previous response to continue within it. An offset at or beyond the page returns no results — narrow with price/beds bands to reach more. Default 0.'
           ),
-      },
+      }),
     },
     async (input) => {
       const limit = input.limit ?? 40;

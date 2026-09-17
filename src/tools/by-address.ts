@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
+import type { McpServer } from '@modelcontextprotocol/server';
 import {
   FetchproxyBridgeDownError,
   FetchproxyTimeoutError,
@@ -509,7 +509,7 @@ export function registerByAddressTools(
         idempotentHint: true,
         openWorldHint: true,
       },
-      inputSchema: {
+      inputSchema: z.object({
         view: viewArg(),
         address: z
           .string()
@@ -521,7 +521,7 @@ export function registerByAddressTools(
           .optional()
           .describe('Two-letter state abbreviation, e.g. "NC"'),
         zip: z.string().optional().describe('ZIP code, e.g. "28746"'),
-      },
+      }),
     },
     async (input) => {
       const addressLine = formatAddressLine(input);

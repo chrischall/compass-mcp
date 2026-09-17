@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
+import type { McpServer } from '@modelcontextprotocol/server';
 import {
   calculateMortgage,
   type MortgageInput,
@@ -82,7 +82,7 @@ export function registerMortgageTools(server: McpServer): void {
         idempotentHint: true,
         openWorldHint: false,
       },
-      inputSchema: {
+      inputSchema: z.object({
         home_price: z.number().positive(),
         interest_rate: z.number().nonnegative().describe('Annual %, e.g. 6.5'),
         down_payment: z.number().nonnegative().optional(),
@@ -101,7 +101,7 @@ export function registerMortgageTools(server: McpServer): void {
           .nonnegative()
           .optional()
           .describe('Annual %, applied when LTV > 80%'),
-      },
+      }),
     },
     async (i) =>
       minifiedResult(toCompassMortgage(calculateMortgage(i as MortgageInput)))

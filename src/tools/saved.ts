@@ -1,5 +1,6 @@
-import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
+import type { McpServer } from '@modelcontextprotocol/server';
 import type { CompassClient } from '../client.js';
+import { z } from "zod";
 
 /**
  * Compass account surfaces (favorites + saved searches) are a known
@@ -43,7 +44,7 @@ export function registerSavedTools(
         idempotentHint: true,
         openWorldHint: true,
       },
-      inputSchema: {},
+      inputSchema: z.object({}),
     },
     async () => {
       throw new Error(NOT_YET_SUPPORTED);
@@ -62,7 +63,7 @@ export function registerSavedTools(
         idempotentHint: true,
         openWorldHint: true,
       },
-      inputSchema: {},
+      inputSchema: z.object({}),
     },
     async () => {
       throw new Error(NOT_YET_SUPPORTED);

@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
+import type { McpServer } from '@modelcontextprotocol/server';
 import type { CompassClient } from '../client.js';
 import { minifiedResult } from '../mcp.js';
 import { extractUc } from '../page-state.js';
@@ -41,7 +41,7 @@ export function registerComparableRentalsTools(
         idempotentHint: true,
         openWorldHint: true,
       },
-      inputSchema: {
+      inputSchema: z.object({
         url: z
           .string()
           .optional()
@@ -60,7 +60,7 @@ export function registerComparableRentalsTools(
           .positive()
           .optional()
           .describe('Max rental candidates to return. Default 20.'),
-      },
+      }),
     },
     async ({ url, listing_id_sha, limit }) => {
       const { listing } = await fetchListingRecord(client, {

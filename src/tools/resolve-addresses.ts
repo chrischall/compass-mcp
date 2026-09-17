@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
+import type { McpServer } from '@modelcontextprotocol/server';
 import {
   BRIDGE_CONCURRENCY,
   classifyRowError,
@@ -147,7 +147,7 @@ export function registerResolveAddressesTools(
         idempotentHint: true,
         openWorldHint: true,
       },
-      inputSchema: {
+      inputSchema: z.object({
         addresses: z
           .array(
             z
@@ -167,7 +167,7 @@ export function registerResolveAddressesTools(
           .describe(
             `Up to ${RESOLVE_ADDRESSES_MAX} address inputs. For higher counts, batch into multiple calls.`
           ),
-      },
+      }),
     },
     async ({ addresses }) => {
       // Bounded fan-out — `@fetchproxy/server` 0.9.x BRIDGE_CONCURRENCY
