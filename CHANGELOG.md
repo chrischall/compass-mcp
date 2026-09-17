@@ -1,5 +1,22 @@
 # Changelog
 
+## [1.0.0](https://github.com/chrischall/compass-mcp/compare/v0.14.4...v1.0.0) (2026-09-17)
+
+
+### ⚠ BREAKING CHANGES
+
+* **mcp:** migrate server to SDK v2 ([#229](https://github.com/chrischall/compass-mcp/issues/229))
+
+### Features
+
+* **mcp:** migrate server to SDK v2 ([#229](https://github.com/chrischall/compass-mcp/issues/229)) ([c7f4028](https://github.com/chrischall/compass-mcp/commit/c7f4028a35d89207c8a41cacdb746b662436aa46))
+
+
+### Bug Fixes
+
+* **build:** preserve Zod initialization in standalone bundle ([#232](https://github.com/chrischall/compass-mcp/issues/232)) ([a676447](https://github.com/chrischall/compass-mcp/commit/a6764475977fcc33780500aa8252d4a2b1514134))
+* **mcp:** address SDK v2 review follow-up ([#233](https://github.com/chrischall/compass-mcp/issues/233)) ([c58941f](https://github.com/chrischall/compass-mcp/commit/c58941f5efdd81757e121ddaa5a363a1166a9b09))
+
 ## [0.14.4](https://github.com/chrischall/compass-mcp/compare/v0.14.3...v0.14.4) (2026-09-15)
 
 
