@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.1.0](https://github.com/chrischall/compass-mcp/compare/v1.0.0...v1.1.0) (2026-09-19)
+
+
+### Features
+
+* **deps:** take mcp-utils 1.0.0, fixing server/discover ([#234](https://github.com/chrischall/compass-mcp/issues/234)) ([fa74ed2](https://github.com/chrischall/compass-mcp/commit/fa74ed20318169353d4a86110953446e11258df6))
+
 ## [1.0.0](https://github.com/chrischall/compass-mcp/compare/v0.14.4...v1.0.0) (2026-09-17)
 
 
