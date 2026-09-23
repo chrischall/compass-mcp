@@ -269,8 +269,12 @@ describe('compass_get_by_address tool', () => {
       // The structured rung short-circuits the SSR rungs entirely.
       expect(mockFetchHtml).not.toHaveBeenCalled();
       // It POSTed to the omnisuggest endpoint.
-      const [calledPath] = mockFetchJson.mock.calls[0];
+      const [calledPath, calledInit] = mockFetchJson.mock.calls[0];
       expect(calledPath).toBe('/api/v3/omnisuggest/autocomplete');
+      // The autocomplete POST is a read — it opts into the transport's
+      // cold-start timeout retry (fetchproxy 3.2 no longer retries non-GETs
+      // by default; chrischall/fleet-audit#312).
+      expect(calledInit).toMatchObject({ method: 'POST', retryOnTimeout: true });
     });
 
     it('CRITICAL #78: resolves 158 Raven Blvd to its _lid/ URL', async () => {

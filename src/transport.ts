@@ -91,6 +91,11 @@ export interface CompassTransport {
       method?: 'GET' | 'POST' | 'PUT' | 'DELETE';
       headers?: Record<string, string>;
       body?: unknown;
+      /** Opt a read-only non-GET (e.g. the omnisuggest autocomplete POST)
+       *  into the transport's cold-start timeout retry. fetchproxy 3.2 only
+       *  retries GET/HEAD/OPTIONS by default so a write is never re-sent;
+       *  leave unset for anything that creates/changes/deletes. */
+      retryOnTimeout?: boolean;
     }
   ): Promise<RequestJsonResult<T>>;
 

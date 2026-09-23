@@ -125,6 +125,7 @@ export class FetchproxyTransport implements CompassTransport {
       method?: 'GET' | 'POST' | 'PUT' | 'DELETE';
       headers?: Record<string, string>;
       body?: unknown;
+      retryOnTimeout?: boolean;
     } = {}
   ): Promise<RequestJsonResult<T>> {
     // The adapter's requestJson(method, path, init) owns serialization,
@@ -133,9 +134,14 @@ export class FetchproxyTransport implements CompassTransport {
     // throwIfSignInPage guards over `result`. compass's interface takes the
     // method inside `init` (default POST); map that onto the adapter's
     // positional-method signature.
+    // `retryOnTimeout` is forwarded only when the caller set it, so a write
+    // never picks up the timeout re-send by accident (fetchproxy 3.2).
     return this.inner.requestJson<T>(init.method ?? 'POST', path, {
       headers: init.headers,
       body: init.body,
+      ...(init.retryOnTimeout !== undefined
+        ? { retryOnTimeout: init.retryOnTimeout }
+        : {}),
     });
   }
 

@@ -122,6 +122,9 @@ export class CompassClient {
       method?: 'GET' | 'POST' | 'PUT' | 'DELETE';
       headers?: Record<string, string>;
       body?: unknown;
+      /** Set `true` ONLY for a provably read-only non-GET (search /
+       *  autocomplete). See `CompassTransport.requestJson`. */
+      retryOnTimeout?: boolean;
     } = {}
   ): Promise<T> {
     const method = init.method ?? 'POST';
@@ -129,6 +132,9 @@ export class CompassClient {
       method,
       headers: init.headers,
       body: init.body,
+      ...(init.retryOnTimeout !== undefined
+        ? { retryOnTimeout: init.retryOnTimeout }
+        : {}),
     });
     this.throwIfNotOk(result, method, path);
     this.throwIfSignInPage(result);
