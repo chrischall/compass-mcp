@@ -441,6 +441,32 @@ describe('compass_search_properties tool', () => {
     expect(parsed.next_offset).toBeUndefined();
   });
 
+  it.each([
+    [{ beds_min: 4, beds_max: 2 }, /beds_min/],
+    [{ price_min: 900000, price_max: 500000 }, /price_min/],
+  ])('rejects an inverted range %o before fetching', async (range, msg) => {
+    const r = await harness.callTool('compass_search_properties', {
+      location: 'x',
+      ...range,
+    });
+    expect(r.isError).toBeTruthy();
+    const text = (r.content[0] as { text: string }).text;
+    expect(text).toMatch(msg);
+    expect(mockFetchHtml).not.toHaveBeenCalled();
+  });
+
+  it('accepts equal min and max bounds', async () => {
+    mockFetchHtml.mockResolvedValueOnce('<html>no script here</html>');
+    const r = await harness.callTool('compass_search_properties', {
+      location: 'x',
+      beds_min: 3,
+      beds_max: 3,
+    });
+    // Passes validation and reaches the fetch (which then fails on the stub HTML).
+    expect(mockFetchHtml).toHaveBeenCalledWith('/homes-for-sale/x/3-3-bed/');
+    expect(r.isError).toBeTruthy();
+  });
+
   it('throws when uc can not be extracted from the HTML', async () => {
     mockFetchHtml.mockResolvedValueOnce('<html>no script here</html>');
     const r = await harness.callTool('compass_search_properties', {
