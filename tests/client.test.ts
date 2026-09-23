@@ -200,6 +200,20 @@ describe('CompassClient', () => {
     expect(r.echoed.n).toBe(42);
   });
 
+  it('fetchJson forwards retryOnTimeout to the transport only when set', async () => {
+    const transport = stubTransport(async () => ({
+      status: 200,
+      body: '{}',
+      url: 'https://www.compass.com/x',
+    }));
+    const client = new CompassClient({ transport });
+    await client.fetchJson('/read', { method: 'POST', body: {}, retryOnTimeout: true });
+    await client.fetchJson('/write', { method: 'POST', body: {} });
+    const calls = (transport.requestJson as ReturnType<typeof vi.fn>).mock.calls;
+    expect(calls[0][1]).toMatchObject({ retryOnTimeout: true });
+    expect(calls[1][1]).not.toHaveProperty('retryOnTimeout');
+  });
+
   it('fetchJson returns null for 204', async () => {
     const client = new CompassClient({
       transport: stubTransport(async () => ({

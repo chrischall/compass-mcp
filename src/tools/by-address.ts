@@ -343,7 +343,14 @@ async function fetchTypeaheadCandidates(
   try {
     const resp = await client.fetchJson<OmnisuggestResponse>(
       OMNISUGGEST_AUTOCOMPLETE_PATH,
-      { method: 'POST', body: buildAutocompleteBody(input) }
+      // Read-only autocomplete POST: safe to re-send after a transport
+      // timeout, so keep the cold-start retry fetchproxy 3.2 no longer
+      // applies to non-GETs by default (chrischall/fleet-audit#312).
+      {
+        method: 'POST',
+        body: buildAutocompleteBody(input),
+        retryOnTimeout: true,
+      }
     );
     const candidates = extractAddressCandidates(resp);
     if (candidates.length === 0) return null;

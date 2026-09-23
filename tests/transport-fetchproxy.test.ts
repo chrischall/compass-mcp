@@ -122,6 +122,34 @@ describe('FetchproxyTransport', () => {
     });
   });
 
+  it('requestJson forwards retryOnTimeout: true for a read-only POST', async () => {
+    const t = new FetchproxyTransport({ version: '0.0.0' });
+    const inner = stubInner();
+    inner.requestJson.mockResolvedValue({
+      data: {},
+      result: { status: 200, body: '{}', url: 'https://www.compass.com/api' },
+    });
+    installInner(t, inner);
+
+    await t.requestJson('/api', { method: 'POST', body: {}, retryOnTimeout: true });
+    const [, , opts] = inner.requestJson.mock.calls[0];
+    expect(opts.retryOnTimeout).toBe(true);
+  });
+
+  it('requestJson does NOT opt a POST into timeout retry unless asked (writes stay single-shot)', async () => {
+    const t = new FetchproxyTransport({ version: '0.0.0' });
+    const inner = stubInner();
+    inner.requestJson.mockResolvedValue({
+      data: {},
+      result: { status: 200, body: '{}', url: 'https://www.compass.com/api' },
+    });
+    installInner(t, inner);
+
+    await t.requestJson('/api', { method: 'POST', body: {} });
+    const [, , opts] = inner.requestJson.mock.calls[0];
+    expect(opts).not.toHaveProperty('retryOnTimeout');
+  });
+
   it('requestJson defaults method to POST and passes data: null through (204)', async () => {
     const t = new FetchproxyTransport({ version: '0.0.0' });
     const inner = stubInner();
