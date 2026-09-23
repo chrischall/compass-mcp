@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.1.2](https://github.com/chrischall/compass-mcp/compare/v1.1.1...v1.1.2) (2026-09-23)
+
+
+### Bug Fixes
+
+* **by-address:** reject wrong-state/ZIP matches and report sign-in blocks as auth_required ([#241](https://github.com/chrischall/compass-mcp/issues/241)) ([18e9ba5](https://github.com/chrischall/compass-mcp/commit/18e9ba5d14248f1d5e8f7812db133c11ffa41aef))
+
 ## [1.1.1](https://github.com/chrischall/compass-mcp/compare/v1.1.0...v1.1.1) (2026-09-23)
 
 
