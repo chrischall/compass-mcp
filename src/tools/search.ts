@@ -299,7 +299,25 @@ export function registerSearchTools(
           .describe(
             'Zero-based offset into the reachable first SSR page. Honored only within that page (#87); use the `next_offset` value from a previous response to continue within it. An offset at or beyond the page returns no results — narrow with price/beds bands to reach more. Default 0.'
           ),
-      }),
+      })
+        // An inverted band builds a path like `/4-2-bed/` that Compass
+        // silently serves as an empty (or reinterpreted) result set. Reject
+        // it up front so the caller learns the band is wrong instead of
+        // reading "0 listings" as a real answer — and no request is spent.
+        .refine(
+          (i) =>
+            i.beds_min === undefined ||
+            i.beds_max === undefined ||
+            i.beds_min <= i.beds_max,
+          { message: 'beds_min must be <= beds_max', path: ['beds_min'] }
+        )
+        .refine(
+          (i) =>
+            i.price_min === undefined ||
+            i.price_max === undefined ||
+            i.price_min <= i.price_max,
+          { message: 'price_min must be <= price_max', path: ['price_min'] }
+        ),
     },
     async (input) => {
       const limit = input.limit ?? 40;
