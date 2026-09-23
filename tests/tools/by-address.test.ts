@@ -8,6 +8,7 @@ import {
   normalizeAddressForMatch,
   registerByAddressTools,
 } from '../../src/tools/by-address.js';
+import { SessionNotAuthenticatedError } from '../../src/client.js';
 import { createTestHarness, parseToolResult } from '../helpers.js';
 
 const mockFetchHtml = vi.fn();
@@ -153,6 +154,82 @@ describe('addressMatchesQuery', () => {
         city: 'Springfield',
       })
     ).toBe(false);
+  });
+
+  // fleet-audit#65: state/zip were documented as signal but never read,
+  // so a {address, state, zip} row with no city accepted a same-street
+  // hit in another state.
+  describe('state/zip gating when no city is supplied (fleet-audit#65)', () => {
+    const q = { address: '10 Main St', state: 'NC', zip: '28746' };
+
+    it('rejects a same-street candidate in a different state and ZIP', () => {
+      expect(addressMatchesQuery('10 Main St, Springfield, MA 01103', q)).toBe(false);
+    });
+
+    it('rejects a conflicting ZIP even when the state agrees', () => {
+      expect(addressMatchesQuery('10 Main St, Charlotte, NC 28202', q)).toBe(false);
+    });
+
+    it('rejects a conflicting state when the candidate carries no ZIP', () => {
+      expect(addressMatchesQuery('10 Main St, Springfield, MA', q)).toBe(false);
+    });
+
+    it('rejects a conflicting ZIP when the candidate carries no state', () => {
+      expect(
+        addressMatchesQuery('10 Main St, Springfield 01103', { address: '10 Main St', zip: '28746' })
+      ).toBe(false);
+    });
+
+    it('accepts the matching state + ZIP', () => {
+      expect(addressMatchesQuery('10 Main St, Lake Lure, NC 28746', q)).toBe(true);
+    });
+
+    it('accepts a ZIP+4 on either side', () => {
+      expect(addressMatchesQuery('10 Main St, Lake Lure, NC 28746-1234', q)).toBe(true);
+      expect(
+        addressMatchesQuery('10 Main St, Lake Lure, NC 28746', { ...q, zip: '28746-9999' })
+      ).toBe(true);
+    });
+
+    it('still accepts a candidate that drops the ZIP and state (subtitles often do)', () => {
+      expect(addressMatchesQuery('10 Main St, Lake Lure', q)).toBe(true);
+    });
+
+    it('is case-insensitive on the query state', () => {
+      expect(addressMatchesQuery('10 Main St, Lake Lure, NC 28746', { ...q, state: 'nc' })).toBe(true);
+    });
+
+    it('does not mistake a 5-digit street number for a conflicting ZIP', () => {
+      expect(
+        addressMatchesQuery('12345 Main St, Lake Lure, NC 28746', { ...q, address: '12345 Main St' })
+      ).toBe(true);
+    });
+
+    it('does not mistake a mixed-case city word ("La Jolla") for a state token', () => {
+      expect(
+        addressMatchesQuery('10 Main St, La Jolla', { address: '10 Main St', state: 'CA' })
+      ).toBe(true);
+    });
+
+    it('does not mistake a directional in the street line ("NE") for a conflicting state', () => {
+      expect(
+        addressMatchesQuery('10 Main St NE, Seattle, WA 98105', {
+          address: '10 Main St NE',
+          state: 'WA',
+          zip: '98105',
+        })
+      ).toBe(true);
+    });
+
+    it('ignores an unrecognised query state / ZIP rather than rejecting', () => {
+      expect(
+        addressMatchesQuery('10 Main St, Lake Lure, NC 28746', {
+          address: '10 Main St',
+          state: 'North Carolina',
+          zip: 'n/a',
+        })
+      ).toBe(true);
+    });
   });
 
   it('rejects when city name is a substring of a different city', () => {
@@ -1042,6 +1119,75 @@ describe('compass_get_by_address tool', () => {
       });
       const parsed = parseToolResult<{ resolved: boolean; error?: string }>(r);
       expect(parsed.resolved).toBe(false);
+      expect(parsed.error).toMatch(/no listing matched/i);
+    });
+  });
+
+  // fleet-audit#67: a sign-in / AWS-WAF-challenge fault was swallowed on
+  // every rung and reported as a clean "no listing matched".
+  describe('auth faults are not reported as a miss (fleet-audit#67)', () => {
+    const notSignedIn = () => new SessionNotAuthenticatedError('Compass', 'compass.com');
+    const addr = {
+      address: '126 Sleeping Bear Ln',
+      city: 'Lake Lure',
+      state: 'NC',
+      zip: '28746',
+    };
+    type Out = { resolved: boolean; status?: string; error?: string; hint?: string; url?: string };
+
+    it('typeahead auth fault + empty SSR rungs → status "auth_required", not "no listing matched"', async () => {
+      mockFetchJson.mockRejectedValueOnce(notSignedIn());
+      mockFetchHtml.mockResolvedValue(searchHtml([]));
+      const r = await harness.callTool('compass_get_by_address', addr);
+      expect(r.isError).toBeFalsy();
+      const parsed = parseToolResult<Out>(r);
+      expect(parsed.resolved).toBe(false);
+      expect(parsed.url).toBeUndefined();
+      expect(parsed.status).toBe('auth_required');
+      expect(parsed.error).toMatch(/sign in/i);
+      expect(parsed.error).not.toMatch(/no listing matched/i);
+      expect(parsed.hint).toMatch(/compass\.com/);
+    });
+
+    it('typeahead auth fault still falls through, and an SSR match still resolves', async () => {
+      mockFetchJson.mockRejectedValueOnce(notSignedIn());
+      mockFetchHtml.mockResolvedValueOnce(
+        searchHtml([
+          {
+            listing: {
+              listingIdSHA: 'sha-after-auth',
+              pageLink: '/homedetails/x/sha-after-auth_lid/',
+              subtitles: ['126 Sleeping Bear Ln', 'Lake Lure, NC 28746'],
+            },
+          },
+        ])
+      );
+      const parsed = parseToolResult<Out & { matched_via?: string }>(
+        await harness.callTool('compass_get_by_address', addr)
+      );
+      expect(parsed.resolved).toBe(true);
+      expect(parsed.matched_via).toBe('freetext');
+      expect(parsed.status).toBeUndefined();
+    });
+
+    it('SSR auth fault counts when the typeahead never answered', async () => {
+      mockFetchJson.mockRejectedValueOnce(new Error('Compass API error: 500 for POST /api/v3/omnisuggest/autocomplete'));
+      mockFetchHtml.mockRejectedValue(notSignedIn());
+      const parsed = parseToolResult<Out>(
+        await harness.callTool('compass_get_by_address', addr)
+      );
+      expect(parsed.resolved).toBe(false);
+      expect(parsed.status).toBe('auth_required');
+    });
+
+    it('SSR auth fault is the expected WAF wall when the typeahead DID answer — a genuine miss', async () => {
+      mockFetchJson.mockResolvedValueOnce({ categories: [] });
+      mockFetchHtml.mockRejectedValue(notSignedIn());
+      const parsed = parseToolResult<Out>(
+        await harness.callTool('compass_get_by_address', addr)
+      );
+      expect(parsed.resolved).toBe(false);
+      expect(parsed.status).toBeUndefined();
       expect(parsed.error).toMatch(/no listing matched/i);
     });
   });

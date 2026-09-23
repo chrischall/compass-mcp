@@ -5,10 +5,11 @@ import {
   FetchproxyTimeoutError,
 } from '@chrischall/mcp-utils/fetchproxy';
 import {
+  FIRST_DIGIT_TO_STATES,
   normalizeAddressForCompare,
   SUFFIX_PAIRS,
 } from '@chrischall/realty-core';
-import type { CompassClient } from '../client.js';
+import { SessionNotAuthenticatedError, type CompassClient } from '../client.js';
 import { viewArg, viewResponse } from '../view.js';
 import { extractUc } from '../page-state.js';
 import { extractPidFromUrl, locationToSlug } from '../url.js';
@@ -149,9 +150,11 @@ export function normalizeAddressForMatch(s: string | undefined): string {
  * caller's query. The candidate must contain every normalized token
  * from the query.address (street line), AND at least one numeric token
  * must be present (guards against matching on city/state words alone).
- * When the caller also supplied `city`/`state`/`zip`, those count as
- * positive signal but don't have to all appear — Compass's card
- * subtitles often drop the ZIP, and some listings drop the state.
+ * A supplied `city` must appear in full. A supplied `state`/`zip` need
+ * not appear — Compass's card subtitles often drop the ZIP, and some
+ * listings drop the state — but a candidate that carries a DIFFERENT
+ * state or ZIP is rejected (fleet-audit#65: a `{address, state, zip}`
+ * row with no city used to accept the same street in another state).
  *
  * Exported for direct unit-testing of the match policy.
  */
@@ -188,8 +191,37 @@ export function addressMatchesQuery(
       return false;
     }
   }
+  const streetTokenSet = new Set(streetTokens);
+  // ZIP gate: reject when the candidate carries a 5-digit ZIP token (the
+  // street line's own tokens excluded, so a 5-digit house number never
+  // counts) and none of them is the caller's ZIP. ZIP+4 on either side
+  // compares on its leading five digits.
+  const queryZip = /^\s*(\d{5})(?:-\d{4})?\s*$/.exec(query.zip ?? '')?.[1];
+  if (queryZip) {
+    const candZips = [...(candidate ?? '').matchAll(/\b(\d{5})(?:-\d{4})?\b/g)]
+      .map((m) => m[1]!)
+      .filter((z) => !streetTokenSet.has(z));
+    if (candZips.length > 0 && !candZips.includes(queryZip)) return false;
+  }
+  // State gate: same shape. Only upper-case two-letter US state codes in
+  // the raw candidate count ("NC", not the "La" of "La Jolla"), minus the
+  // street line's own tokens (a "NE" directional, a "Ct" suffix).
+  const queryState = query.state?.trim().toUpperCase();
+  if (queryState && US_STATE_CODES.has(queryState)) {
+    const candStates = [...(candidate ?? '').matchAll(/\b[A-Z]{2}\b/g)]
+      .map((m) => m[0])
+      .filter(
+        (t) => US_STATE_CODES.has(t) && !streetTokenSet.has(t.toLowerCase())
+      );
+    if (candStates.length > 0 && !candStates.includes(queryState)) return false;
+  }
   return true;
 }
+
+/** Every US state/territory code realty-core's ZIP table knows about. */
+const US_STATE_CODES: ReadonlySet<string> = new Set(
+  Object.values(FIRST_DIGIT_TO_STATES).flatMap((set) => [...set])
+);
 
 /** Which rung produced a successful resolution. */
 export type MatchedVia = 'typeahead' | 'freetext' | 'search_fallback';
@@ -207,6 +239,10 @@ interface ByAddressUnresolved {
   resolved: false;
   error: string;
   address: string;
+  /** Set when the lookup was blocked by a sign-in / AWS WAF challenge
+   *  (fleet-audit#67) — NOT a genuine miss. */
+  status?: 'auth_required';
+  hint?: string;
 }
 
 type ByAddressResult = ByAddressResolved | ByAddressUnresolved;
@@ -297,7 +333,8 @@ async function fetchListings(
  */
 async function fetchListingsTolerant(
   client: CompassClient,
-  path: string
+  path: string,
+  auth: AuthFaultTracker
 ): Promise<Array<{ listing?: RawListingLike }>> {
   try {
     return await fetchListings(client, path);
@@ -308,6 +345,10 @@ async function fetchListingsTolerant(
     ) {
       throw e;
     }
+    // Still falls through (#86), but a sign-in / WAF-challenge fault is
+    // remembered so a final miss can be reported as `auth_required`
+    // rather than "no listing matched" (fleet-audit#67).
+    if (e instanceof SessionNotAuthenticatedError) auth.ssr ??= e;
     // WAF 403 / sign-in interstitial / HTTP error / parse fault — treat
     // as "this rung surfaced nothing" and fall through to the next rung.
     return [];
@@ -338,7 +379,8 @@ async function fetchListingsTolerant(
  */
 async function fetchTypeaheadCandidates(
   client: CompassClient,
-  input: ByAddressInput
+  input: ByAddressInput,
+  auth: AuthFaultTracker
 ): Promise<Array<{ listing?: RawListingLike }> | null> {
   try {
     const resp = await client.fetchJson<OmnisuggestResponse>(
@@ -373,8 +415,39 @@ async function fetchTypeaheadCandidates(
     ) {
       throw e;
     }
+    // The typeahead is not WAF-walled, so a sign-in / WAF-challenge
+    // fault here means the bridge session itself is blocked
+    // (fleet-audit#67). Still fall through — an SSR rung may answer —
+    // but remember it for the final classification.
+    auth.typeaheadAnswered = false;
+    if (e instanceof SessionNotAuthenticatedError) auth.typeahead = e;
     return null;
   }
+}
+
+/**
+ * Per-resolve record of sign-in / WAF-challenge faults (fleet-audit#67).
+ * Every rung swallows content failures so the next rung can try, which
+ * used to turn a blocked session into a false "no listing matched".
+ */
+interface AuthFaultTracker {
+  /** False when the typeahead rung threw instead of answering. */
+  typeaheadAnswered: boolean;
+  typeahead?: SessionNotAuthenticatedError;
+  ssr?: SessionNotAuthenticatedError;
+}
+
+/**
+ * The auth fault that makes a miss untrustworthy, if any. A typeahead
+ * auth fault always counts. An SSR one counts only when the typeahead
+ * never answered: the SSR free-text path is routinely WAF-walled (#86),
+ * so behind a working typeahead that wall is expected, not a blocked
+ * session.
+ */
+function blockingAuthFault(
+  auth: AuthFaultTracker
+): SessionNotAuthenticatedError | undefined {
+  return auth.typeahead ?? (auth.typeaheadAnswered ? undefined : auth.ssr);
 }
 
 /**
@@ -396,11 +469,17 @@ export async function resolveOneAddress(
   input: ByAddressInput
 ): Promise<
   | { resolved: true; listing: RawListingLike; matched_via: MatchedVia }
-  | { resolved: false; error: string }
+  | {
+      resolved: false;
+      error: string;
+      status?: 'auth_required';
+      hint?: string;
+    }
 > {
+  const auth: AuthFaultTracker = { typeaheadAnswered: true };
   // Rung 0: structured typeahead (issue #78/#79) — the primary rung.
   // Routes around the AWS WAF that 403s the SSR ?q= path below.
-  const typeaheadEntries = await fetchTypeaheadCandidates(client, input);
+  const typeaheadEntries = await fetchTypeaheadCandidates(client, input, auth);
   if (typeaheadEntries) {
     const typeaheadMatch = findMatchingListing(typeaheadEntries, input);
     if (typeaheadMatch) {
@@ -419,7 +498,11 @@ export async function resolveOneAddress(
   // (#85).
   const query = buildAddressQuery(input);
   const freetextPath = `/homes-for-sale/?q=${encodeURIComponent(query)}`;
-  const freetextEntries = await fetchListingsTolerant(client, freetextPath);
+  const freetextEntries = await fetchListingsTolerant(
+    client,
+    freetextPath,
+    auth
+  );
   const freetextMatch = findMatchingListing(freetextEntries, input);
   if (freetextMatch) {
     return { resolved: true, listing: freetextMatch, matched_via: 'freetext' };
@@ -438,7 +521,7 @@ export async function resolveOneAddress(
   // on a tighter locality (ZIP vs. city).
   const slugBasePath = buildFallbackSlugPath(input);
   if (slugBasePath) {
-    const entries = await fetchListingsTolerant(client, slugBasePath);
+    const entries = await fetchListingsTolerant(client, slugBasePath, auth);
     const matched = findMatchingListing(entries, input);
     if (matched) {
       return {
@@ -449,6 +532,15 @@ export async function resolveOneAddress(
     }
   }
 
+  const authFault = blockingAuthFault(auth);
+  if (authFault) {
+    return {
+      resolved: false,
+      status: 'auth_required',
+      error: authFault.message,
+      ...(authFault.hint ? { hint: authFault.hint } : {}),
+    };
+  }
   return { resolved: false, error: 'no listing matched the address' };
 }
 
@@ -509,7 +601,7 @@ export function registerByAddressTools(
     {
       title: 'Resolve a Compass listing by street address',
       description:
-        "Resolve a free-text street address to a Compass listing's canonical URL and identifiers in one call. Walks three rungs: first the structured typeahead `POST /api/v3/omnisuggest/autocomplete` (the primary rung — Compass's address-suggest API, which routes around the AWS WAF that 403s the SSR free-text path, issues #78/#79), then `/homes-for-sale/?q=<address>` (the free-text rung) and — when those return no verified match — a slug-based search at `/homes-for-sale/<city-state-or-zip>/` (the search-fallback rung, issue #71). Each candidate is verified against the query (case + street-type abbreviation normalization, then whole-token equality, issue #45) before being accepted. Returns `{ url, listing_id_sha, pid, address, resolved, matched_via }` where `matched_via` is `\"typeahead\"`, `\"freetext\"`, or `\"search_fallback\"` so callers can see which rung found the match. When no rung matches, returns `{ resolved: false, error: \"no listing matched\" }` rather than leaking a wrong URL. The `url` is the stable `_pid/` form when Compass provides a `navigationPageLink` (preferred for trackers/bookmarks — sha URLs go stale on relisting), falling back to the `_lid/` form otherwise. Read-only; safe to call repeatedly.",
+        "Resolve a free-text street address to a Compass listing's canonical URL and identifiers in one call. Walks three rungs: first the structured typeahead `POST /api/v3/omnisuggest/autocomplete` (the primary rung — Compass's address-suggest API, which routes around the AWS WAF that 403s the SSR free-text path, issues #78/#79), then `/homes-for-sale/?q=<address>` (the free-text rung) and — when those return no verified match — a slug-based search at `/homes-for-sale/<city-state-or-zip>/` (the search-fallback rung, issue #71). Each candidate is verified against the query (case + street-type abbreviation normalization, then whole-token equality, issue #45) before being accepted. Returns `{ url, listing_id_sha, pid, address, resolved, matched_via }` where `matched_via` is `\"typeahead\"`, `\"freetext\"`, or `\"search_fallback\"` so callers can see which rung found the match. When no rung matches, returns `{ resolved: false, error: \"no listing matched\" }` rather than leaking a wrong URL. When the lookup was blocked by a sign-in / AWS WAF challenge instead, it returns `{ resolved: false, status: \"auth_required\", error, hint }` — NOT a miss: sign in to compass.com in the browser and retry. The `url` is the stable `_pid/` form when Compass provides a `navigationPageLink` (preferred for trackers/bookmarks — sha URLs go stale on relisting), falling back to the `_lid/` form otherwise. Read-only; safe to call repeatedly.",
       annotations: {
         title: 'Resolve a Compass listing by street address',
         readOnlyHint: true,
@@ -538,6 +630,9 @@ export function registerByAddressTools(
           resolved: false,
           error: outcome.error,
           address: addressLine,
+          ...(outcome.status
+            ? { status: outcome.status, hint: outcome.hint }
+            : {}),
         };
         return viewResponse(input.view, result);
       }

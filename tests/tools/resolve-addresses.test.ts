@@ -3,7 +3,7 @@ import {
   FetchproxyBridgeDownError,
   FetchproxyTimeoutError,
 } from '@fetchproxy/server';
-import type { CompassClient } from '../../src/client.js';
+import { SessionNotAuthenticatedError, type CompassClient } from '../../src/client.js';
 import { registerResolveAddressesTools } from '../../src/tools/resolve-addresses.js';
 import { registerByAddressTools } from '../../src/tools/by-address.js';
 import { createTestHarness, parseToolResult } from '../helpers.js';
@@ -290,6 +290,25 @@ describe('compass_resolve_addresses tool', () => {
       }>(r);
       expect(parsed.rows[0].status).toBe('bridge_down');
       expect(parsed.rows[0].retryable).toBe(true);
+    });
+
+    it('fleet-audit#67: a sign-in / WAF-challenge fault surfaces status:"auth_required", not a bare miss', async () => {
+      const notSignedIn = () => new SessionNotAuthenticatedError('Compass', 'compass.com');
+      mockFetchJson.mockRejectedValue(notSignedIn());
+      mockFetchHtml.mockRejectedValue(notSignedIn());
+
+      const r = await harness.callTool('compass_resolve_addresses', {
+        addresses: [{ address: '158 Raven Blvd', city: 'Lake Lure', state: 'NC' }],
+      });
+      const parsed = parseToolResult<{
+        rows: Array<{ resolved: boolean; status?: string; error?: string; hint?: string; url?: string }>;
+      }>(r);
+      const row = parsed.rows[0];
+      expect(row.resolved).toBe(false);
+      expect(row.url).toBeUndefined();
+      expect(row.status).toBe('auth_required');
+      expect(row.error).toMatch(/sign in/i);
+      expect(row.hint).toMatch(/compass\.com/);
     });
 
     it('a genuine empty-but-successful resolve stays resolved:false with NO timeout status', async () => {
