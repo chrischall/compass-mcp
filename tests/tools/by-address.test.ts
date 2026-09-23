@@ -155,6 +155,82 @@ describe('addressMatchesQuery', () => {
     ).toBe(false);
   });
 
+  // fleet-audit#65: state/zip were documented as signal but never read,
+  // so a {address, state, zip} row with no city accepted a same-street
+  // hit in another state.
+  describe('state/zip gating when no city is supplied (fleet-audit#65)', () => {
+    const q = { address: '10 Main St', state: 'NC', zip: '28746' };
+
+    it('rejects a same-street candidate in a different state and ZIP', () => {
+      expect(addressMatchesQuery('10 Main St, Springfield, MA 01103', q)).toBe(false);
+    });
+
+    it('rejects a conflicting ZIP even when the state agrees', () => {
+      expect(addressMatchesQuery('10 Main St, Charlotte, NC 28202', q)).toBe(false);
+    });
+
+    it('rejects a conflicting state when the candidate carries no ZIP', () => {
+      expect(addressMatchesQuery('10 Main St, Springfield, MA', q)).toBe(false);
+    });
+
+    it('rejects a conflicting ZIP when the candidate carries no state', () => {
+      expect(
+        addressMatchesQuery('10 Main St, Springfield 01103', { address: '10 Main St', zip: '28746' })
+      ).toBe(false);
+    });
+
+    it('accepts the matching state + ZIP', () => {
+      expect(addressMatchesQuery('10 Main St, Lake Lure, NC 28746', q)).toBe(true);
+    });
+
+    it('accepts a ZIP+4 on either side', () => {
+      expect(addressMatchesQuery('10 Main St, Lake Lure, NC 28746-1234', q)).toBe(true);
+      expect(
+        addressMatchesQuery('10 Main St, Lake Lure, NC 28746', { ...q, zip: '28746-9999' })
+      ).toBe(true);
+    });
+
+    it('still accepts a candidate that drops the ZIP and state (subtitles often do)', () => {
+      expect(addressMatchesQuery('10 Main St, Lake Lure', q)).toBe(true);
+    });
+
+    it('is case-insensitive on the query state', () => {
+      expect(addressMatchesQuery('10 Main St, Lake Lure, NC 28746', { ...q, state: 'nc' })).toBe(true);
+    });
+
+    it('does not mistake a 5-digit street number for a conflicting ZIP', () => {
+      expect(
+        addressMatchesQuery('12345 Main St, Lake Lure, NC 28746', { ...q, address: '12345 Main St' })
+      ).toBe(true);
+    });
+
+    it('does not mistake a mixed-case city word ("La Jolla") for a state token', () => {
+      expect(
+        addressMatchesQuery('10 Main St, La Jolla', { address: '10 Main St', state: 'CA' })
+      ).toBe(true);
+    });
+
+    it('does not mistake a directional in the street line ("NE") for a conflicting state', () => {
+      expect(
+        addressMatchesQuery('10 Main St NE, Seattle, WA 98105', {
+          address: '10 Main St NE',
+          state: 'WA',
+          zip: '98105',
+        })
+      ).toBe(true);
+    });
+
+    it('ignores an unrecognised query state / ZIP rather than rejecting', () => {
+      expect(
+        addressMatchesQuery('10 Main St, Lake Lure, NC 28746', {
+          address: '10 Main St',
+          state: 'North Carolina',
+          zip: 'n/a',
+        })
+      ).toBe(true);
+    });
+  });
+
   it('rejects when city name is a substring of a different city', () => {
     // Query city "Lee" must NOT match candidate city "Leesburg".
     expect(

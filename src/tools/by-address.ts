@@ -5,6 +5,7 @@ import {
   FetchproxyTimeoutError,
 } from '@chrischall/mcp-utils/fetchproxy';
 import {
+  FIRST_DIGIT_TO_STATES,
   normalizeAddressForCompare,
   SUFFIX_PAIRS,
 } from '@chrischall/realty-core';
@@ -149,9 +150,11 @@ export function normalizeAddressForMatch(s: string | undefined): string {
  * caller's query. The candidate must contain every normalized token
  * from the query.address (street line), AND at least one numeric token
  * must be present (guards against matching on city/state words alone).
- * When the caller also supplied `city`/`state`/`zip`, those count as
- * positive signal but don't have to all appear — Compass's card
- * subtitles often drop the ZIP, and some listings drop the state.
+ * A supplied `city` must appear in full. A supplied `state`/`zip` need
+ * not appear — Compass's card subtitles often drop the ZIP, and some
+ * listings drop the state — but a candidate that carries a DIFFERENT
+ * state or ZIP is rejected (fleet-audit#65: a `{address, state, zip}`
+ * row with no city used to accept the same street in another state).
  *
  * Exported for direct unit-testing of the match policy.
  */
@@ -188,8 +191,37 @@ export function addressMatchesQuery(
       return false;
     }
   }
+  const streetTokenSet = new Set(streetTokens);
+  // ZIP gate: reject when the candidate carries a 5-digit ZIP token (the
+  // street line's own tokens excluded, so a 5-digit house number never
+  // counts) and none of them is the caller's ZIP. ZIP+4 on either side
+  // compares on its leading five digits.
+  const queryZip = /^\s*(\d{5})(?:-\d{4})?\s*$/.exec(query.zip ?? '')?.[1];
+  if (queryZip) {
+    const candZips = [...(candidate ?? '').matchAll(/\b(\d{5})(?:-\d{4})?\b/g)]
+      .map((m) => m[1]!)
+      .filter((z) => !streetTokenSet.has(z));
+    if (candZips.length > 0 && !candZips.includes(queryZip)) return false;
+  }
+  // State gate: same shape. Only upper-case two-letter US state codes in
+  // the raw candidate count ("NC", not the "La" of "La Jolla"), minus the
+  // street line's own tokens (a "NE" directional, a "Ct" suffix).
+  const queryState = query.state?.trim().toUpperCase();
+  if (queryState && US_STATE_CODES.has(queryState)) {
+    const candStates = [...(candidate ?? '').matchAll(/\b[A-Z]{2}\b/g)]
+      .map((m) => m[0])
+      .filter(
+        (t) => US_STATE_CODES.has(t) && !streetTokenSet.has(t.toLowerCase())
+      );
+    if (candStates.length > 0 && !candStates.includes(queryState)) return false;
+  }
   return true;
 }
+
+/** Every US state/territory code realty-core's ZIP table knows about. */
+const US_STATE_CODES: ReadonlySet<string> = new Set(
+  Object.values(FIRST_DIGIT_TO_STATES).flatMap((set) => [...set])
+);
 
 /** Which rung produced a successful resolution. */
 export type MatchedVia = 'typeahead' | 'freetext' | 'search_fallback';
