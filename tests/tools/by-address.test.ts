@@ -8,6 +8,7 @@ import {
   normalizeAddressForMatch,
   registerByAddressTools,
 } from '../../src/tools/by-address.js';
+import { SessionNotAuthenticatedError } from '../../src/client.js';
 import { createTestHarness, parseToolResult } from '../helpers.js';
 
 const mockFetchHtml = vi.fn();
@@ -1118,6 +1119,75 @@ describe('compass_get_by_address tool', () => {
       });
       const parsed = parseToolResult<{ resolved: boolean; error?: string }>(r);
       expect(parsed.resolved).toBe(false);
+      expect(parsed.error).toMatch(/no listing matched/i);
+    });
+  });
+
+  // fleet-audit#67: a sign-in / AWS-WAF-challenge fault was swallowed on
+  // every rung and reported as a clean "no listing matched".
+  describe('auth faults are not reported as a miss (fleet-audit#67)', () => {
+    const notSignedIn = () => new SessionNotAuthenticatedError('Compass', 'compass.com');
+    const addr = {
+      address: '126 Sleeping Bear Ln',
+      city: 'Lake Lure',
+      state: 'NC',
+      zip: '28746',
+    };
+    type Out = { resolved: boolean; status?: string; error?: string; hint?: string; url?: string };
+
+    it('typeahead auth fault + empty SSR rungs → status "auth_required", not "no listing matched"', async () => {
+      mockFetchJson.mockRejectedValueOnce(notSignedIn());
+      mockFetchHtml.mockResolvedValue(searchHtml([]));
+      const r = await harness.callTool('compass_get_by_address', addr);
+      expect(r.isError).toBeFalsy();
+      const parsed = parseToolResult<Out>(r);
+      expect(parsed.resolved).toBe(false);
+      expect(parsed.url).toBeUndefined();
+      expect(parsed.status).toBe('auth_required');
+      expect(parsed.error).toMatch(/sign in/i);
+      expect(parsed.error).not.toMatch(/no listing matched/i);
+      expect(parsed.hint).toMatch(/compass\.com/);
+    });
+
+    it('typeahead auth fault still falls through, and an SSR match still resolves', async () => {
+      mockFetchJson.mockRejectedValueOnce(notSignedIn());
+      mockFetchHtml.mockResolvedValueOnce(
+        searchHtml([
+          {
+            listing: {
+              listingIdSHA: 'sha-after-auth',
+              pageLink: '/homedetails/x/sha-after-auth_lid/',
+              subtitles: ['126 Sleeping Bear Ln', 'Lake Lure, NC 28746'],
+            },
+          },
+        ])
+      );
+      const parsed = parseToolResult<Out & { matched_via?: string }>(
+        await harness.callTool('compass_get_by_address', addr)
+      );
+      expect(parsed.resolved).toBe(true);
+      expect(parsed.matched_via).toBe('freetext');
+      expect(parsed.status).toBeUndefined();
+    });
+
+    it('SSR auth fault counts when the typeahead never answered', async () => {
+      mockFetchJson.mockRejectedValueOnce(new Error('Compass API error: 500 for POST /api/v3/omnisuggest/autocomplete'));
+      mockFetchHtml.mockRejectedValue(notSignedIn());
+      const parsed = parseToolResult<Out>(
+        await harness.callTool('compass_get_by_address', addr)
+      );
+      expect(parsed.resolved).toBe(false);
+      expect(parsed.status).toBe('auth_required');
+    });
+
+    it('SSR auth fault is the expected WAF wall when the typeahead DID answer — a genuine miss', async () => {
+      mockFetchJson.mockResolvedValueOnce({ categories: [] });
+      mockFetchHtml.mockRejectedValue(notSignedIn());
+      const parsed = parseToolResult<Out>(
+        await harness.callTool('compass_get_by_address', addr)
+      );
+      expect(parsed.resolved).toBe(false);
+      expect(parsed.status).toBeUndefined();
       expect(parsed.error).toMatch(/no listing matched/i);
     });
   });

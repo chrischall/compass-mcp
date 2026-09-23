@@ -75,7 +75,24 @@ interface TransportFaultRow {
   query: string;
 }
 
-type RowResult = ResolvedRow | UnresolvedRow | TransportFaultRow;
+/**
+ * Sign-in / AWS WAF-challenge row (fleet-audit#67). The bridge session
+ * was blocked, so the lookup never ran — NOT a genuine miss. Retrying
+ * blindly won't help; the user has to sign in (see `hint`) first.
+ */
+interface AuthRequiredRow {
+  resolved: false;
+  status: 'auth_required';
+  error: string;
+  hint?: string;
+  query: string;
+}
+
+type RowResult =
+  | ResolvedRow
+  | UnresolvedRow
+  | TransportFaultRow
+  | AuthRequiredRow;
 
 async function resolveOne(
   client: CompassClient,
@@ -92,6 +109,15 @@ async function resolveOne(
       resolveOneAddress(client, input)
     );
     if (!outcome.resolved) {
+      if (outcome.status === 'auth_required') {
+        return {
+          resolved: false,
+          status: 'auth_required',
+          error: outcome.error,
+          ...(outcome.hint ? { hint: outcome.hint } : {}),
+          query,
+        };
+      }
       return { resolved: false, error: outcome.error, query };
     }
     const { listing, matched_via } = outcome;
@@ -137,6 +163,7 @@ export function registerResolveAddressesTools(
         'either `{ resolved: true, url, listing_id_sha, pid, address, matched_via }`, `{ resolved: false, error, query }` for a genuine no-match, ' +
         'or — when the bridge timed out / was unreachable (issue #85) — `{ resolved: false, status: "timeout" | "bridge_down", retryable: true, error, query }`. ' +
         'A `status` row is NOT a miss: the lookup never completed, so retry it (a cold bridge usually succeeds on the second call) rather than concluding Compass has no listing. ' +
+        'A row with `status: "auth_required"` (plus `error` and `hint`) means the browser session was signed out or stuck on an AWS WAF challenge: sign in to compass.com, then retry. ' +
         "Each row walks the same three rungs as `compass_get_by_address` — first the structured typeahead `POST /api/v3/omnisuggest/autocomplete` (the primary rung that routes around the AWS WAF, issues #78/#79), then `/homes-for-sale/?q=<address>` (freetext), then `/homes-for-sale/<locality-slug>/` (search_fallback, issue #71) — and verifies candidates against the same whole-token address-match policy (#45). " +
         'The `matched_via` field on each resolved row indicates which rung found it. Compass\'s search degrades into far-away top hits when the local market has no match, and bulk amplifies the corruption ' +
         'surface, so a miss returns `resolved: false` with no URL rather than leaking the wrong property. Calls fan out ' +
