@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.1.1](https://github.com/chrischall/compass-mcp/compare/v1.1.0...v1.1.1) (2026-09-23)
+
+
+### Bug Fixes
+
+* **deps:** require zod ^4.6.5 to match @chrischall/mcp-utils 2.4.0 ([#240](https://github.com/chrischall/compass-mcp/issues/240)) ([e223b56](https://github.com/chrischall/compass-mcp/commit/e223b5613613c0412d6b9274df21d7e5087dc83a))
+* **deps:** upgrade @chrischall/mcp-utils to 2.4.0 and @fetchproxy/* to 3.2.0 ([#238](https://github.com/chrischall/compass-mcp/issues/238)) ([82af7e4](https://github.com/chrischall/compass-mcp/commit/82af7e428c218c7aad148af51ccc6bcef8bd73b9))
+
 ## [1.1.0](https://github.com/chrischall/compass-mcp/compare/v1.0.0...v1.1.0) (2026-09-19)
 
 
