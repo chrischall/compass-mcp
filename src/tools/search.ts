@@ -17,7 +17,7 @@ import { viewArg, viewResponse } from '../view.js';
  *
  * Filters ride as URL path segments. Compass canonicalizes order:
  *
- *   /homes-for-sale/<loc>/<min-max>-bed/<min-max>-price/
+ *   /homes-for-sale/<loc>/<min-max>-bed/<min-max>-price/  (`<min>-bed` alone = min or more)
  *
  * Verified live 2026-05-24 against
  *   /homes-for-sale/new-york-ny/2-3-bed/1500000-3500000-price/
@@ -199,7 +199,11 @@ export const COMPASS_PAGE_SIZE = 41;
 export function buildSearchPath(input: SearchInput): string {
   const slug = locationToSlug(input.location);
   const segments: string[] = [];
-  if (input.beds_min !== undefined || input.beds_max !== undefined) {
+  if (input.beds_min !== undefined && input.beds_max === undefined) {
+    // `N-bed` is Compass's open-ended "N or more" (minBedrooms only);
+    // `N-N-bed` would pin it to exactly N (fleet-audit #66).
+    segments.push(`${input.beds_min}-bed`);
+  } else if (input.beds_min !== undefined || input.beds_max !== undefined) {
     const lo = input.beds_min ?? 0;
     const hi = input.beds_max ?? lo;
     segments.push(`${lo}-${hi}-bed`);

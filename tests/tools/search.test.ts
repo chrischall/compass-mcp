@@ -30,6 +30,15 @@ describe('buildSearchPath', () => {
     ).toBe('/homes-for-sale/new-york-ny/2-3-bed/');
   });
 
+  it('encodes beds_min alone as open-ended "N or more" (fleet-audit #66)', () => {
+    // Compass reads /3-bed/ as minBedrooms:3 with no max (checked live on
+    // compass.com 2026-09-24: rawLolSearchQuery {minBedrooms:3}, 3280 homes in
+    // charlotte-nc) while /3-3-bed/ is exactly 3 (min 3, max 3; 1746 homes).
+    expect(buildSearchPath({ location: 'Charlotte, NC', beds_min: 3 })).toBe(
+      '/homes-for-sale/charlotte-nc/3-bed/'
+    );
+  });
+
   it('encodes a price range', () => {
     expect(
       buildSearchPath({ location: 'x', price_min: 500000, price_max: 1200000 })
