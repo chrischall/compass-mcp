@@ -347,3 +347,82 @@ describe('compass_compare_properties tool', () => {
     expect(parsed.results[1].retryable).toBeUndefined();
   });
 });
+
+// fleet-audit#927: overall deadline + pending rows (see bulk-get).
+describe('compass_compare_properties overall deadline (fleet-audit#927)', () => {
+  const fetchHtml = vi.fn();
+  const client = { fetchHtml } as unknown as CompassClient;
+  let h: Awaited<ReturnType<typeof createTestHarness>>;
+  afterAll(async () => {
+    if (h) await h.close();
+  });
+
+  it('setup', async () => {
+    h = await createTestHarness((server) =>
+      registerCompareTools(server, client, { overallDeadlineMs: 60 })
+    );
+  });
+
+  it('returns completed rows plus a retryable pending row when one target hangs', async () => {
+    fetchHtml.mockImplementation(async (path: string) => {
+      if (path.includes('b_lid')) return new Promise<string>(() => {});
+      return htmlWith({
+        listingIdSHA: 'id-a',
+        pageLink: '/h/a/',
+        price: { lastKnown: 250_000 },
+      });
+    });
+    const r = await h.callTool('compass_compare_properties', {
+      targets: [
+        { url: '/homedetails/foo/a_lid/' },
+        { url: '/homedetails/foo/b_lid/' },
+      ],
+      include_summary: true,
+    });
+    expect(r.isError).toBeFalsy();
+    const parsed = parseToolResult<{
+      count: number;
+      pending?: number;
+      summary?: Array<{ field: string; values: unknown[] }>;
+      results: Array<{
+        url?: string;
+        property?: { price?: number };
+        status?: string;
+        retryable?: boolean;
+        error?: string;
+      }>;
+    }>(r);
+    expect(parsed.count).toBe(2);
+    expect(parsed.pending).toBe(1);
+    expect(parsed.results[0].property?.price).toBe(250_000);
+    expect(parsed.results[1]).toMatchObject({
+      url: '/homedetails/foo/b_lid/',
+      status: 'pending',
+      retryable: true,
+    });
+    expect(parsed.results[1].error).toMatch(/deadline/i);
+    const price = parsed.summary?.find((s) => s.field === 'price');
+    expect(price?.values).toEqual([250_000, null]);
+  });
+
+  it('stops dialling the bridge for abandoned rows once the deadline fires', async () => {
+    fetchHtml.mockImplementation(
+      () =>
+        new Promise<string>((resolve) =>
+          setTimeout(
+            () => resolve(htmlWith({ listingIdSHA: 'x', pageLink: '/h/x/' })),
+            150
+          )
+        )
+    );
+    const targets = Array.from({ length: 10 }, (_, i) => ({
+      url: `/homedetails/foo/${i}_lid/`,
+    }));
+    const r = await h.callTool('compass_compare_properties', { targets });
+    const parsed = parseToolResult<{ pending?: number }>(r);
+    expect(parsed.pending).toBe(10);
+    const callsAtReturn = fetchHtml.mock.calls.length;
+    await new Promise((res) => setTimeout(res, 400));
+    expect(fetchHtml.mock.calls.length).toBe(callsAtReturn);
+  });
+});

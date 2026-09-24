@@ -3,11 +3,17 @@ import type { McpServer } from '@modelcontextprotocol/server';
 import {
   BRIDGE_CONCURRENCY,
   classifyRowError,
-  mapWithConcurrency,
   retryOnceOnTimeout,
 } from '@chrischall/mcp-utils/fetchproxy';
+import { runBoundedBatch } from '@chrischall/mcp-utils';
 import type { CompassClient } from '../client.js';
 import { minifiedResult } from '../mcp.js';
+import {
+  OVERALL_DEADLINE_MS,
+  guardClient,
+  pendingMessage,
+  type BulkTuning,
+} from './bounded-batch.js';
 import {
   fetchListingRecord,
   format,
@@ -40,8 +46,11 @@ interface CompareRow {
    * row with `status` is retryable, not a clean miss. A genuine miss
    * (parse failure, restricted listing, protocol fault) carries only
    * `error` with no `status`/`retryable`.
+   *
+   * `pending` (fleet-audit#927): the overall deadline cut the row off
+   * before it settled — also retryable, also NOT a miss.
    */
-  status?: 'timeout' | 'bridge_down';
+  status?: 'timeout' | 'bridge_down' | 'pending';
   retryable?: true;
 }
 
@@ -83,14 +92,16 @@ export function buildSummary(rows: CompareRow[]): SummaryRow[] {
 
 export function registerCompareTools(
   server: McpServer,
-  client: CompassClient
+  client: CompassClient,
+  tuning: BulkTuning = {}
 ): void {
+  const overallDeadlineMs = tuning.overallDeadlineMs ?? OVERALL_DEADLINE_MS;
   server.registerTool(
     'compass_compare_properties',
     {
       title: 'Compare Compass properties side-by-side',
       description:
-        "Fetch 2 or more Compass properties and align their facts side-by-side. Each target may supply `url` (a full Compass homedetails URL or path) or `listing_id_sha` alone — sha-only targets fetch /listing/<sha>/view, which redirects to the homedetails page. Returns the full per-property record per row (with `extracted_features` populated). Per-target errors are captured per-row — one bad target will not fail the whole call. Calls are concurrent. The raw `description` is omitted from each row by default — pass `include_description: true` to keep it. The redundant `summary` table is also opt-in via `include_summary: true` — by default only `results[]` is returned, which already carries every fact.",
+        "Fetch 2 or more Compass properties and align their facts side-by-side. Each target may supply `url` (a full Compass homedetails URL or path) or `listing_id_sha` alone — sha-only targets fetch /listing/<sha>/view, which redirects to the homedetails page. Returns the full per-property record per row (with `extracted_features` populated). Per-target errors are captured per-row — one bad target will not fail the whole call. Calls are concurrent, and the whole call is bounded by an overall deadline: any row still unsettled when it is reached comes back as `{ status: \"pending\", retryable: true, error }` with a top-level `pending` count — re-run just those targets. The raw `description` is omitted from each row by default — pass `include_description: true` to keep it. The redundant `summary` table is also opt-in via `include_summary: true` — by default only `results[]` is returned, which already carries every fact.",
       annotations: {
         title: 'Compare Compass properties side-by-side',
         readOnlyHint: true,
@@ -143,13 +154,17 @@ export function registerCompareTools(
       // at 25 targets; that's well above BRIDGE_CONCURRENCY=6, so the
       // bounded fan-out still bites on realistic batches. Joining the
       // cohort cap keeps cross-MCP behavior consistent.
-      const rows: CompareRow[] = await mapWithConcurrency(
+      //
+      // fleet-audit#927: `runBoundedBatch` bounds the whole call with an
+      // overall deadline (unsettled rows come back `pending`) and
+      // `guardClient` stops abandoned rows dialling the bridge.
+      const rows: CompareRow[] = await runBoundedBatch<CompareTarget, CompareRow>(
         ts,
-        BRIDGE_CONCURRENCY,
-        async (t) => {
+        async (t, signal) => {
+          const rowClient = guardClient(client, signal);
           try {
             const { listing } = await retryOnceOnTimeout(() =>
-              fetchListingRecord(client, t)
+              fetchListingRecord(rowClient, t)
             );
             return {
               listing_id_sha: listing.listingIdSHA,
@@ -181,14 +196,28 @@ export function registerCompareTools(
             }
             return row;
           }
+        },
+        {
+          deadlineMs: overallDeadlineMs,
+          concurrency: BRIDGE_CONCURRENCY,
+          onTimeout: (t) => ({
+            listing_id_sha: t.listing_id_sha,
+            url: t.url,
+            status: 'pending',
+            retryable: true,
+            error: pendingMessage('compass_compare_properties'),
+          }),
         }
       );
+      const pending = rows.filter((r) => r.status === 'pending').length;
       const body: {
         count: number;
+        pending?: number;
         summary?: SummaryRow[];
         results: CompareRow[];
       } = {
         count: rows.length,
+        ...(pending > 0 ? { pending } : {}),
         results: rows,
       };
       if (include_summary === true) body.summary = buildSummary(rows);

@@ -3,11 +3,17 @@ import type { McpServer } from '@modelcontextprotocol/server';
 import {
   BRIDGE_CONCURRENCY,
   classifyRowError,
-  mapWithConcurrency,
   retryOnceOnTimeout,
 } from '@chrischall/mcp-utils/fetchproxy';
+import { runBoundedBatch } from '@chrischall/mcp-utils';
 import type { CompassClient } from '../client.js';
 import { minifiedResult } from '../mcp.js';
+import {
+  OVERALL_DEADLINE_MS,
+  guardClient,
+  pendingMessage,
+  type BulkTuning,
+} from './bounded-batch.js';
 import { extractPidFromUrl } from '../url.js';
 import {
   buildAddressQuery,
@@ -88,11 +94,25 @@ interface AuthRequiredRow {
   query: string;
 }
 
+/**
+ * Deadline-cut row (fleet-audit#927). The overall deadline fired before
+ * this row's rung walk settled, so we have no answer from Compass — NOT a
+ * genuine no-match. Retryable: re-run just the pending addresses.
+ */
+interface PendingRow {
+  resolved: false;
+  status: 'pending';
+  retryable: true;
+  error: string;
+  query: string;
+}
+
 type RowResult =
   | ResolvedRow
   | UnresolvedRow
   | TransportFaultRow
-  | AuthRequiredRow;
+  | AuthRequiredRow
+  | PendingRow;
 
 async function resolveOne(
   client: CompassClient,
@@ -152,8 +172,10 @@ async function resolveOne(
 
 export function registerResolveAddressesTools(
   server: McpServer,
-  client: CompassClient
+  client: CompassClient,
+  tuning: BulkTuning = {}
 ): void {
+  const overallDeadlineMs = tuning.overallDeadlineMs ?? OVERALL_DEADLINE_MS;
   server.registerTool(
     'compass_resolve_addresses',
     {
@@ -167,7 +189,9 @@ export function registerResolveAddressesTools(
         "Each row walks the same three rungs as `compass_get_by_address` — first the structured typeahead `POST /api/v3/omnisuggest/autocomplete` (the primary rung that routes around the AWS WAF, issues #78/#79), then `/homes-for-sale/?q=<address>` (freetext), then `/homes-for-sale/<locality-slug>/` (search_fallback, issue #71) — and verifies candidates against the same whole-token address-match policy (#45). " +
         'The `matched_via` field on each resolved row indicates which rung found it. Compass\'s search degrades into far-away top hits when the local market has no match, and bulk amplifies the corruption ' +
         'surface, so a miss returns `resolved: false` with no URL rather than leaking the wrong property. Calls fan out ' +
-        'concurrently server-side. Read-only; safe to call repeatedly.',
+        'concurrently server-side, and the whole call is bounded by an overall deadline: any row still unsettled when it is ' +
+        'reached comes back as `{ resolved: false, status: "pending", retryable: true, error, query }` with a top-level ' +
+        '`pending` count — that is NOT a miss, so re-run just those addresses. Read-only; safe to call repeatedly.',
       annotations: {
         title: 'Bulk-resolve Compass listings by street address',
         readOnlyHint: true,
@@ -202,13 +226,33 @@ export function registerResolveAddressesTools(
       // bridge from timing out on resolver round-trips at scale. The
       // one-shot timeout retry sits inside `resolveOne` (before the
       // per-row catch swallows it into `resolved: false`).
-      const rows = await mapWithConcurrency(
+      //
+      // fleet-audit#927: each row can make three bridge calls, so this is
+      // the tool most likely to outrun the MCP client's request deadline.
+      // `runBoundedBatch` bounds the whole call (unsettled rows come back
+      // `pending`) and `guardClient` stops an abandoned row from walking
+      // on to its next rung — or a queued row from starting at all.
+      const rows = await runBoundedBatch<ByAddressInput, RowResult>(
         addresses as ByAddressInput[],
-        BRIDGE_CONCURRENCY,
-        (a) => resolveOne(client, a)
+        (a, signal) => resolveOne(guardClient(client, signal), a),
+        {
+          deadlineMs: overallDeadlineMs,
+          concurrency: BRIDGE_CONCURRENCY,
+          onTimeout: (a) => ({
+            resolved: false,
+            status: 'pending',
+            retryable: true,
+            error: pendingMessage('compass_resolve_addresses'),
+            query: buildAddressQuery(a),
+          }),
+        }
       );
+      const pending = rows.filter(
+        (r) => 'status' in r && r.status === 'pending'
+      ).length;
       return minifiedResult({
         count: rows.length,
+        ...(pending > 0 ? { pending } : {}),
         rows,
       });
     }

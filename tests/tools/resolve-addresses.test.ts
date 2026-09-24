@@ -830,3 +830,83 @@ describe('compass_resolve_addresses tool', () => {
     });
   });
 });
+
+// fleet-audit#927: overall deadline + pending rows. Each row can walk
+// three rungs (typeahead + two SSR fetches), so this is the worst case.
+describe('compass_resolve_addresses overall deadline (fleet-audit#927)', () => {
+  const fetchHtml = vi.fn();
+  const fetchJson = vi.fn();
+  const client = { fetchHtml, fetchJson } as unknown as CompassClient;
+  let h: Awaited<ReturnType<typeof createTestHarness>>;
+  afterAll(async () => {
+    if (h) await h.close();
+  });
+
+  it('setup', async () => {
+    h = await createTestHarness((server) =>
+      registerResolveAddressesTools(server, client, { overallDeadlineMs: 60 })
+    );
+  });
+
+  it('returns settled rows plus a retryable pending row when one lookup hangs', async () => {
+    fetchJson.mockImplementation(async (_path: string, init: { body?: unknown }) => {
+      if (JSON.stringify(init?.body ?? '').includes('Hanging')) {
+        return new Promise(() => {});
+      }
+      return { categories: [] };
+    });
+    fetchHtml.mockResolvedValue(searchHtml([]));
+    const r = await h.callTool('compass_resolve_addresses', {
+      addresses: [
+        { address: '1 Quick St', city: 'Testville', state: 'NC' },
+        { address: '2 Hanging Ln', city: 'Testville', state: 'NC' },
+      ],
+    });
+    expect(r.isError).toBeFalsy();
+    const parsed = parseToolResult<{
+      count: number;
+      pending?: number;
+      rows: Array<{
+        resolved: boolean;
+        status?: string;
+        retryable?: boolean;
+        error?: string;
+        query?: string;
+      }>;
+    }>(r);
+    expect(parsed.count).toBe(2);
+    expect(parsed.pending).toBe(1);
+    expect(parsed.rows[0].resolved).toBe(false);
+    expect(parsed.rows[0].status).toBeUndefined();
+    expect(parsed.rows[1]).toMatchObject({
+      resolved: false,
+      status: 'pending',
+      retryable: true,
+    });
+    expect(parsed.rows[1].query).toContain('2 Hanging Ln');
+    expect(parsed.rows[1].error).toMatch(/deadline/i);
+  });
+
+  it('stops dialling the bridge (every rung) for abandoned rows once the deadline fires', async () => {
+    const slow = <T>(v: T) =>
+      new Promise<T>((resolve) => setTimeout(() => resolve(v), 150));
+    fetchJson.mockImplementation(() => slow({ categories: [] }));
+    fetchHtml.mockImplementation(() => slow(searchHtml([])));
+    const addresses = Array.from({ length: 10 }, (_, i) => ({
+      address: `${i + 1} Slow Rd`,
+      city: 'Testville',
+      state: 'NC',
+    }));
+    const r = await h.callTool('compass_resolve_addresses', { addresses });
+    const parsed = parseToolResult<{ pending?: number }>(r);
+    expect(parsed.pending).toBe(10);
+    const callsAtReturn =
+      fetchJson.mock.calls.length + fetchHtml.mock.calls.length;
+    await new Promise((res) => setTimeout(res, 600));
+    // Neither the next rung of an in-flight row nor a queued row may
+    // reach the bridge after the call has returned.
+    expect(fetchJson.mock.calls.length + fetchHtml.mock.calls.length).toBe(
+      callsAtReturn
+    );
+  });
+});

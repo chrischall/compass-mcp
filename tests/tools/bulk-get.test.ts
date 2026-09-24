@@ -267,3 +267,100 @@ describe('compass_bulk_get tool', () => {
     expect(peak).toBeGreaterThan(1);
   });
 });
+
+// fleet-audit#927: the whole call is bounded by an overall deadline so a
+// stale/hung tab can't push it past the MCP client's request deadline
+// (-32001) and lose every row that already completed.
+describe('compass_bulk_get overall deadline (fleet-audit#927)', () => {
+  const fetchHtml = vi.fn();
+  const client = { fetchHtml } as unknown as CompassClient;
+  let h: Awaited<ReturnType<typeof createTestHarness>>;
+  afterAll(async () => {
+    if (h) await h.close();
+  });
+
+  it('setup', async () => {
+    h = await createTestHarness((server) =>
+      registerBulkGetTools(server, client, { overallDeadlineMs: 60 })
+    );
+  });
+
+  it('returns completed rows plus a retryable pending row when one target hangs', async () => {
+    fetchHtml.mockImplementation(async (path: string) => {
+      if (path.includes('b_lid')) return new Promise<string>(() => {});
+      const id = path.includes('a_lid') ? 'a' : 'c';
+      return homedetailsHtml({
+        listingIdSHA: `id-${id}`,
+        pageLink: `/h/${id}/`,
+        price: { lastKnown: 100_000 },
+      });
+    });
+    const r = await h.callTool('compass_bulk_get', {
+      targets: [
+        { url: '/homedetails/foo/a_lid/' },
+        { url: '/homedetails/foo/b_lid/' },
+        { url: '/homedetails/foo/c_lid/' },
+      ],
+    });
+    expect(r.isError).toBeFalsy();
+    const parsed = parseToolResult<{
+      count: number;
+      pending?: number;
+      rows: Array<{
+        url?: string;
+        property?: { price?: number };
+        status?: string;
+        retryable?: boolean;
+        error?: string;
+      }>;
+    }>(r);
+    expect(parsed.count).toBe(3);
+    expect(parsed.pending).toBe(1);
+    expect(parsed.rows[0].property?.price).toBe(100_000);
+    expect(parsed.rows[2].property?.price).toBe(100_000);
+    expect(parsed.rows[1]).toMatchObject({
+      url: '/homedetails/foo/b_lid/',
+      status: 'pending',
+      retryable: true,
+    });
+    expect(parsed.rows[1].property).toBeUndefined();
+    expect(parsed.rows[1].error).toMatch(/deadline/i);
+  });
+
+  it('omits the pending count when every row settles in time', async () => {
+    fetchHtml.mockImplementation(async () =>
+      homedetailsHtml({ listingIdSHA: 'id-x', pageLink: '/h/x/' })
+    );
+    const r = await h.callTool('compass_bulk_get', {
+      targets: [{ url: '/homedetails/foo/a_lid/' }],
+    });
+    const parsed = parseToolResult<{ pending?: number }>(r);
+    expect(parsed.pending).toBeUndefined();
+  });
+
+  it('stops dialling the bridge for abandoned rows once the deadline fires', async () => {
+    fetchHtml.mockImplementation(
+      (path: string) =>
+        new Promise<string>((resolve) =>
+          setTimeout(
+            () =>
+              resolve(
+                homedetailsHtml({ listingIdSHA: path, pageLink: '/h/x/' })
+              ),
+            150
+          )
+        )
+    );
+    const targets = Array.from({ length: 10 }, (_, i) => ({
+      url: `/homedetails/foo/${i}_lid/`,
+    }));
+    const r = await h.callTool('compass_bulk_get', { targets });
+    const parsed = parseToolResult<{ pending?: number }>(r);
+    expect(parsed.pending).toBe(10);
+    const callsAtReturn = fetchHtml.mock.calls.length;
+    await new Promise((res) => setTimeout(res, 400));
+    // The in-flight rows finish in the background, but the runners must
+    // not start any new bridge request after the call has returned.
+    expect(fetchHtml.mock.calls.length).toBe(callsAtReturn);
+  });
+});
