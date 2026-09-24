@@ -61,6 +61,7 @@ That's it. No API keys, no env vars.
 - **`compass_resolve_addresses`** — Bulk version of `get_by_address` — concurrent server-side resolution of many addresses in one round trip, sharing the same rung walker and per-row error contract.
 - **`compass_bulk_get`** — Unbounded structured fetch (up to 200 targets) by `url` or `listing_id_sha`. One row per target; per-target errors captured per-row. No summary table.
 - **`compass_compare_properties`** — Fetch and align up to 25 properties side-by-side. Per-target errors captured per-row; an opt-in pivoted summary table via `include_summary`.
+- All three batch tools share an overall deadline (~45s). A row still unsettled when it fires comes back `status: "pending", retryable: true` with a top-level `pending` count — not a miss; re-run just those rows.
 
 ### Local math (no network)
 
