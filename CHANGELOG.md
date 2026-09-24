@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.1.3](https://github.com/chrischall/compass-mcp/compare/v1.1.2...v1.1.3) (2026-09-24)
+
+
+### Bug Fixes
+
+* **search:** reject inverted beds/price ranges before fetching ([#243](https://github.com/chrischall/compass-mcp/issues/243)) ([0eb2d92](https://github.com/chrischall/compass-mcp/commit/0eb2d927853c71873073ceef223b857e7b50543c))
+* **search:** treat beds_min alone as 'N or more' bedrooms, not exactly N ([#245](https://github.com/chrischall/compass-mcp/issues/245)) ([6ec790c](https://github.com/chrischall/compass-mcp/commit/6ec790c2415034ca5a70eb556eeafb69b16db24a))
+
 ## [1.1.2](https://github.com/chrischall/compass-mcp/compare/v1.1.1...v1.1.2) (2026-09-23)
 
 
