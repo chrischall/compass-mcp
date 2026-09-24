@@ -62,6 +62,8 @@ src/
     affordability.ts    # compass_calculate_affordability (realty-core calculateAffordability)
     by-address.ts       # compass_get_by_address (address → canonical URL + ids; typeahead rung)
     resolve-addresses.ts # compass_resolve_addresses (bulk by-address, shared rung walker)
+    bounded-batch.ts    # overall deadline + `pending` rows + abort-guarded client shared by
+                        #   bulk_get / compare / resolve_addresses (runBoundedBatch, 45s)
     typeahead.ts        # omnisuggest autocomplete helpers (WAF-immune resolution rung)
     agent-listings.ts   # compass_get_agent_listings (/agents/<slug>/ __AGENT_PROFILE__ → active + closed listings)
     healthcheck.ts      # compass_healthcheck — thin wiring of mcp-utils'

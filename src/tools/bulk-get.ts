@@ -3,11 +3,17 @@ import type { McpServer } from '@modelcontextprotocol/server';
 import {
   BRIDGE_CONCURRENCY,
   classifyRowError,
-  mapWithConcurrency,
   retryOnceOnTimeout,
 } from '@chrischall/mcp-utils/fetchproxy';
+import { runBoundedBatch } from '@chrischall/mcp-utils';
 import type { CompassClient } from '../client.js';
 import { minifiedResult } from '../mcp.js';
+import {
+  OVERALL_DEADLINE_MS,
+  guardClient,
+  pendingMessage,
+  type BulkTuning,
+} from './bounded-batch.js';
 import {
   fetchListingRecord,
   format,
@@ -54,15 +60,20 @@ interface BulkGetRow {
    * with `status` is retryable, not a clean miss. A genuine miss
    * (parse failure, restricted listing, protocol fault) carries only
    * `error` with no `status`/`retryable`.
+   *
+   * `pending` (fleet-audit#927): the overall deadline cut the row off
+   * before it settled — also retryable, also NOT a miss.
    */
-  status?: 'timeout' | 'bridge_down';
+  status?: 'timeout' | 'bridge_down' | 'pending';
   retryable?: true;
 }
 
 export function registerBulkGetTools(
   server: McpServer,
-  client: CompassClient
+  client: CompassClient,
+  tuning: BulkTuning = {}
 ): void {
+  const overallDeadlineMs = tuning.overallDeadlineMs ?? OVERALL_DEADLINE_MS;
   server.registerTool(
     'compass_bulk_get',
     {
@@ -75,7 +86,9 @@ export function registerBulkGetTools(
         'bridge (issue #73), the row also carries `{ status: "timeout" | "bridge_down", retryable: true }` — that is NOT ' +
         'a missing listing, so retry it (a cold bridge usually succeeds on the second call) rather than concluding ' +
         'Compass has no record. Targets accept the same `url` / `listing_id_sha` shape as `compass_get_property`. ' +
-        'Calls fan out concurrently. `extracted_features` is populated per row. The raw `description` is omitted by ' +
+        'Calls fan out concurrently. The whole call is bounded by an overall deadline: a slow or hung row never wedges it — ' +
+        'any row still unsettled when the deadline is reached comes back as `{ status: "pending", retryable: true, error }` ' +
+        'alongside a top-level `pending` count, so re-run just those targets. `extracted_features` is populated per row. The raw `description` is omitted by ' +
         'default — pass `include_description: true` to keep it.',
       annotations: {
         title: 'Bulk-fetch Compass listings',
@@ -125,17 +138,22 @@ export function registerBulkGetTools(
       // 20-of-20 clean at 6); compass joins the same cap. The retry
       // wrapper buys back the rotating-tab tax — a single timeout on
       // a stale tab usually succeeds on the second attempt.
-      const rows: BulkGetRow[] = await mapWithConcurrency(
+      //
+      // fleet-audit#927: `runBoundedBatch` adds an overall deadline so a
+      // stale tab can't hold the call past the MCP client's request
+      // deadline and lose every completed row; unsettled rows come back
+      // `pending`. `guardClient` stops abandoned rows dialling the bridge.
+      const rows: BulkGetRow[] = await runBoundedBatch<BulkGetTarget, BulkGetRow>(
         ts,
-        BRIDGE_CONCURRENCY,
-        async (t) => {
+        async (t, signal) => {
+          const rowClient = guardClient(client, signal);
           const row: BulkGetRow = {
             listing_id_sha: t.listing_id_sha,
             url: t.url,
           };
           try {
             const { listing } = await retryOnceOnTimeout(() =>
-              fetchListingRecord(client, t)
+              fetchListingRecord(rowClient, t)
             );
             row.listing_id_sha = listing.listingIdSHA;
             row.url = listing.pageLink
@@ -163,10 +181,23 @@ export function registerBulkGetTools(
             }
           }
           return row;
+        },
+        {
+          deadlineMs: overallDeadlineMs,
+          concurrency: BRIDGE_CONCURRENCY,
+          onTimeout: (t) => ({
+            listing_id_sha: t.listing_id_sha,
+            url: t.url,
+            status: 'pending',
+            retryable: true,
+            error: pendingMessage('compass_bulk_get'),
+          }),
         }
       );
+      const pending = rows.filter((r) => r.status === 'pending').length;
       return minifiedResult({
         count: rows.length,
+        ...(pending > 0 ? { pending } : {}),
         rows,
       });
     }
