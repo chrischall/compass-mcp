@@ -313,6 +313,36 @@ describe('compass_get_by_address tool', () => {
   });
 
   describe('#78/#79 structured typeahead rung (primary)', () => {
+    it('matches "Pkwy" to a "Parkway" candidate (realty-core 0.4.8, fleet-audit#216)', async () => {
+      // realty-core <0.4.7 listed the non-USPS alias ['Pkw', 'Parkway']
+      // last in SUFFIX_PAIRS, so the last-write-wins fold mapped
+      // "parkway" to "pkw" while "pkwy" stayed "pkwy" — the right house
+      // was rejected whenever one side spelled the suffix out.
+      mockFetchJson.mockResolvedValueOnce(
+        omnisuggest([
+          {
+            text: '400 Blue Ridge Parkway',
+            subText: 'Lake Lure, NC',
+            id: '1887095624271872999',
+          },
+        ])
+      );
+      const r = await harness.callTool('compass_get_by_address', {
+        address: '400 Blue Ridge Pkwy',
+        city: 'Lake Lure',
+        state: 'NC',
+        zip: '28746',
+      });
+      const parsed = parseToolResult<{
+        resolved: boolean;
+        listing_id_sha?: string;
+        matched_via?: string;
+      }>(r);
+      expect(parsed.resolved).toBe(true);
+      expect(parsed.matched_via).toBe('typeahead');
+      expect(parsed.listing_id_sha).toBe('1887095624271872999');
+    });
+
     it('resolves via the autocomplete endpoint before any SSR fetch', async () => {
       mockFetchJson.mockResolvedValueOnce(
         omnisuggest([
