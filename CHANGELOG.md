@@ -1,5 +1,14 @@
 # Changelog
 
+## [1.1.4](https://github.com/chrischall/compass-mcp/compare/v1.1.3...v1.1.4) (2026-09-25)
+
+
+### Bug Fixes
+
+* **bulk:** return partial results instead of timing out in compass_bulk_get, compare and resolve_addresses ([#250](https://github.com/chrischall/compass-mcp/issues/250)) ([fa1ea90](https://github.com/chrischall/compass-mcp/commit/fa1ea90c9edba5130959d878620d74c41a38f998))
+* **deps:** bump dotenv in the production-majors group ([#248](https://github.com/chrischall/compass-mcp/issues/248)) ([564de70](https://github.com/chrischall/compass-mcp/commit/564de709a8969bfcdc955d6e0b43e2c8978d2f9b))
+* **deps:** take realty-core 0.4.8 address matching (wrong house, unit numbers) ([#251](https://github.com/chrischall/compass-mcp/issues/251)) ([86a7952](https://github.com/chrischall/compass-mcp/commit/86a7952448ccd76bacd000b6e885dff2d042f909))
+
 ## [1.1.3](https://github.com/chrischall/compass-mcp/compare/v1.1.2...v1.1.3) (2026-09-24)
 
 
