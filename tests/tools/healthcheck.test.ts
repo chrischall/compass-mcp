@@ -156,7 +156,7 @@ describe('compass_healthcheck tool', () => {
     expect(parsed.ok).toBe(false);
     expect(parsed.bridge.role).toBe('peer');
     expect(parsed.error.kind).toBe('timeout');
-    expect(parsed.hint).toMatch(/extension popup/i);
+    expect(parsed.hint).toContain('open the ContextMint Bridge popup');
   });
 
   it('bridge_down hint wins over the generic role=null hint when both apply', async () => {
@@ -181,7 +181,9 @@ describe('compass_healthcheck tool', () => {
     const r = await harness.callTool('compass_healthcheck', {});
     const parsed = parseToolResult<{ error: { kind: string }; hint: string }>(r);
     expect(parsed.error.kind).toBe('bridge_down');
-    expect(parsed.hint).toMatch(/service worker/i);
+    expect(parsed.hint).toContain(
+      "The ContextMint Bridge extension's service worker is not responding"
+    );
     expect(parsed.hint).not.toMatch(/never bound a role/);
   });
 
@@ -267,7 +269,52 @@ describe('compass_healthcheck tool', () => {
     expect(parsed.ok).toBe(false);
     expect(parsed.error.kind).toBe('bridge_down');
     // Hint must point the operator at the extension's service worker.
-    expect(parsed.hint).toMatch(/service worker/i);
+    expect(parsed.hint).toContain(
+      "The ContextMint Bridge extension's service worker is not responding"
+    );
+  });
+
+  it('labels a browser capability gap as capability_unavailable and says the browser, not the MCP, lacks it', async () => {
+    const { FetchproxyProtocolError } = await import('@chrischall/mcp-utils/fetchproxy');
+    const client = stubClient({
+      fetchHtml: vi
+        .fn()
+        .mockRejectedValue(
+          new FetchproxyProtocolError(
+            'capability "downloads" is not available in this browser (safari)'
+          )
+        ),
+    });
+    harness = await createTestHarness((server) =>
+      registerHealthcheckTools(server, client)
+    );
+    const r = await harness.callTool('compass_healthcheck', {});
+    const parsed = parseToolResult<{ ok: boolean; error: { kind: string }; hint: string }>(r);
+    expect(parsed.ok).toBe(false);
+    expect(parsed.error.kind).toBe('capability_unavailable');
+    expect(parsed.hint).toContain(
+      'This browser (safari) can\'t serve the "downloads" capability this tool needs'
+    );
+    expect(parsed.hint).toContain("The MCP isn't at fault");
+  });
+
+  it('labels an undeclared-capability refusal as capability_denied (an MCP bug)', async () => {
+    const { FetchproxyProtocolError } = await import('@chrischall/mcp-utils/fetchproxy');
+    const client = stubClient({
+      fetchHtml: vi
+        .fn()
+        .mockRejectedValue(
+          new FetchproxyProtocolError('capability "downloads" not granted to this MCP')
+        ),
+    });
+    harness = await createTestHarness((server) =>
+      registerHealthcheckTools(server, client)
+    );
+    const r = await harness.callTool('compass_healthcheck', {});
+    const parsed = parseToolResult<{ ok: boolean; error: { kind: string }; hint: string }>(r);
+    expect(parsed.ok).toBe(false);
+    expect(parsed.error.kind).toBe('capability_denied');
+    expect(parsed.hint).toContain('This is a bug in the MCP');
   });
 
   it('surfaces freshness counters (last_success_at, last_failure_at, consecutive_failures) on the bridge block', async () => {

@@ -5,7 +5,7 @@ description: Look up real-estate listings, property details, photos, price histo
 
 # compass-mcp
 
-MCP server for Compass — natural-language access to listings, property records, photos, price history, and address resolution. Routes every request through your signed-in compass.com tab via the fetchproxy browser extension, so AWS WAF sees a real browser session instead of a Node process.
+MCP server for Compass — natural-language access to listings, property records, photos, price history, and address resolution. Routes every request through your signed-in compass.com tab via the ContextMint Bridge browser extension, so AWS WAF sees a real browser session instead of a Node process.
 
 - **npm:** [npmjs.com/package/compass-mcp](https://www.npmjs.com/package/compass-mcp)
 - **Source:** [github.com/chrischall/compass-mcp](https://github.com/chrischall/compass-mcp)
