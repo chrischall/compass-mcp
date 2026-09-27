@@ -7,7 +7,7 @@ import { registerBridgeHealthcheckTool } from '@chrischall/mcp-utils/fetchproxy'
  * so the user can tell, with ONE tool call, whether:
  *
  *   - compass-mcp's WebSocket bridge is up (`bridge.role` non-null)
- *   - the fetchproxy browser extension is connected (request reaches a tab and
+ *   - the ContextMint Bridge browser extension is connected (request reaches a tab and
  *     a response comes back)
  *   - the active compass.com tab is responsive (the fetch resolved in time)
  *
