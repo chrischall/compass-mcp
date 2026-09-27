@@ -1,6 +1,6 @@
 ---
 name: compass
-description: Look up real-estate listings, property details, photos, price history, and resolve addresses on Compass via MCP. Triggers on phrases like "find homes on compass in", "compass property details for", "compass photos for", "compass price history for", "resolve this address on compass", "compare these compass listings", "what does compass say about", or any request involving Compass properties, prices, or comparisons. Requires compass-mcp installed and the fetchproxy extension active (see Setup below).
+description: Look up real-estate listings, property details, photos, price history, and resolve addresses on Compass via MCP. Triggers on phrases like "find homes on compass in", "compass property details for", "compass photos for", "compass price history for", "resolve this address on compass", "compare these compass listings", "what does compass say about", or any request involving Compass properties, prices, or comparisons. Requires compass-mcp installed and the ContextMint Bridge extension active (see Setup below).
 ---
 
 # compass-mcp
@@ -10,7 +10,7 @@ MCP server for Compass — natural-language access to listings, property records
 - **npm:** [npmjs.com/package/compass-mcp](https://www.npmjs.com/package/compass-mcp)
 - **Source:** [github.com/chrischall/compass-mcp](https://github.com/chrischall/compass-mcp)
 
-> ⚠️ Compass does not publish a public consumer API. Unlike portals with a JSON API surface, **compass.com is a server-rendered React app** — there are no `/api/...` data endpoints to call. Every tool extracts state from the inline scripts each page server-renders (`global.uc.sharedReactAppProps.initialResults` for search, `window.__INITIAL_DATA__.props.listingRelation.listing` for homedetails). Requests are dispatched through your own signed-in browser tab via the fetchproxy extension. Use at your own discretion.
+> ⚠️ Compass does not publish a public consumer API. Unlike portals with a JSON API surface, **compass.com is a server-rendered React app** — there are no `/api/...` data endpoints to call. Every tool extracts state from the inline scripts each page server-renders (`global.uc.sharedReactAppProps.initialResults` for search, `window.__INITIAL_DATA__.props.listingRelation.listing` for homedetails). Requests are dispatched through your own signed-in browser tab via the ContextMint Bridge extension. Use at your own discretion.
 
 ## Setup
 
@@ -29,16 +29,12 @@ MCP server for Compass — natural-language access to listings, property records
 }
 ```
 
-### 2. Install the fetchproxy extension (one-time, shared across all fetchproxy-based MCPs)
+### 2. Install the ContextMint Bridge extension (one-time, shared across all fetchproxy-based MCPs)
 
-```bash
-git clone https://github.com/chrischall/fetchproxy
-cd fetchproxy
-npm ci
-npm --workspace=@fetchproxy/extension-chrome run build
-```
+Get it from the [ContextMint Bridge releases](https://github.com/nullnet-app/contextmint-bridge/releases):
 
-Then in Chrome: `chrome://extensions` → Developer mode → Load unpacked → pick `packages/extension-chrome/dist/`.
+- **Chrome:** unzip the Chrome zip, then `chrome://extensions` → Developer mode → Load unpacked → pick the unzipped folder.
+- **Safari:** the bridge ships inside the ContextMint app — install the app and enable the extension in Safari's settings.
 
 ### 3. Open compass.com and sign in.
 
