@@ -16,9 +16,9 @@ fully server-rendered React app that embeds each page's data as JSON inside
 an inline `<script>` global (`global.uc`, `window.__INITIAL_DATA__`,
 `window.__AGENT_PROFILE__`). compass.com also runs **AWS WAF**, which 403s
 plain `curl`/Node requests on some paths regardless of headers. `fpx` routes
-every request through the user's own signed-in browser tab (the fetchproxy
-extension), which already carries a cleared WAF session, so the page renders
-normally — you then pull the JSON out of the HTML yourself.
+every request through the user's own signed-in browser tab (the ContextMint
+Bridge extension), which already carries a cleared WAF session, so the page
+renders normally — you then pull the JSON out of the HTML yourself.
 
 This is **Bucket 1 (full-fetchproxy)**: every call, not just an auth
 bootstrap, rides the bridge. Compass validates at the session level per
