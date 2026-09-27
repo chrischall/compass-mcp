@@ -3,9 +3,9 @@
 //
 // Boot sequence:
 //   1. Construct a FetchproxyTransport listening on 127.0.0.1:37149.
-//      The shared fetchproxy Chrome/Safari extension — installed
+//      The shared ContextMint Bridge Chrome/Safari extension — installed
 //      separately, not in this repo — connects here.
-//      See https://github.com/chrischall/fetchproxy.
+//      See https://github.com/nullnet-app/contextmint-bridge/releases.
 //   2. CompassClient.start() — brings the transport up. This MUST run
 //      before `runMcp` connects stdio so the WS bridge is bound by the
 //      time the host can issue tool calls.
@@ -81,7 +81,7 @@ await runMcp<CompassClient>({
   ],
   banner:
     `[compass-mcp] v${VERSION} — WebSocket bridge via @fetchproxy/server on 127.0.0.1:${port}. ` +
-    'Install the fetchproxy extension (see https://github.com/chrischall/fetchproxy) ' +
+    'Install the ContextMint Bridge extension (see https://github.com/nullnet-app/contextmint-bridge/releases) ' +
     'and sign into compass.com. This project was developed and is maintained by AI (Claude). ' +
     'Use at your own discretion.',
   shutdown: { onSignal: () => client.close() },

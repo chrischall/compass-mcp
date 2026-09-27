@@ -31,10 +31,13 @@ search/listing/agent data and the address-typeahead endpoint are all public.
 ```sh
 npm install -g @fetchproxy/cli              # provides `fpx`
 fpx profile add compass --domain compass.com
-fpx pair -p compass                          # prints a pair code → approve in the fetchproxy extension
+fpx pair -p compass                          # prints a pair code → approve in the ContextMint Bridge extension
 ```
 
-Requirements: the **fetchproxy** browser extension installed, an open
+Requirements: the **ContextMint Bridge** browser extension installed
+([releases](https://github.com/nullnet-app/contextmint-bridge/releases); it is the
+fetchproxy extension renamed, from the same maintainer, with public source and a
+`.sha256` beside each release zip), an open
 `www.compass.com` tab, and its Chrome **Site access** allowing `compass.com`.
 Pairing persists — after the first approval every later `fpx` call reuses it.
 

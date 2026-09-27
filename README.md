@@ -6,7 +6,7 @@
 
 Compass real-estate access as an MCP server for Claude — search listings, fetch property details, photo galleries, price history, and run affordability/mortgage math, all via natural language.
 
-> ⚠️ Compass does not publish a public consumer API. This server scrapes the same server-rendered HTML compass.com itself ships to your browser, routed through your own signed-in browser tab via the [fetchproxy](https://github.com/chrischall/fetchproxy) extension. Every request acts on behalf of your existing session — your cookies, your TLS, your JS context — exactly as if you'd clicked it in the browser yourself. Treat this as informal use of Compass's website. Use at your own discretion.
+> ⚠️ Compass does not publish a public consumer API. This server scrapes the same server-rendered HTML compass.com itself ships to your browser, routed through your own signed-in browser tab via the [ContextMint Bridge](https://github.com/nullnet-app/contextmint-bridge) extension. Every request acts on behalf of your existing session — your cookies, your TLS, your JS context — exactly as if you'd clicked it in the browser yourself. Treat this as informal use of Compass's website. Use at your own discretion.
 
 ## Tools
 
@@ -27,7 +27,7 @@ Compass real-estate access as an MCP server for Claude — search listings, fetc
 
 By using this MCP server, you acknowledge and agree to the following:
 
-**1. This server accesses your own Compass session.** Every request is dispatched through your own browser tab via the fetchproxy extension — your cookies, your TLS, your session. It does not — and cannot — access anyone else's account.
+**1. This server accesses your own Compass session.** Every request is dispatched through your own browser tab via the ContextMint Bridge extension — your cookies, your TLS, your session. It does not — and cannot — access anyone else's account.
 
 **2. [Compass's Terms of Use](https://www.compass.com/about/terms-of-use) govern your use of this server**, just as they govern your direct use of compass.com. The clauses most relevant here:
 
@@ -84,16 +84,16 @@ npm run build
 
 ### One-time browser setup
 
-compass-mcp talks to your browser through the [fetchproxy](https://github.com/chrischall/fetchproxy) extension, which is shared across every fetchproxy-based MCP (zillow-mcp, opentable-mcp, resy-mcp, …). Install it once:
+compass-mcp talks to your browser through the **ContextMint Bridge** extension, which is shared across every fetchproxy-based MCP (zillow-mcp, opentable-mcp, resy-mcp, …). Install it once from the [ContextMint Bridge releases](https://github.com/nullnet-app/contextmint-bridge/releases):
+
+- **Chrome:** download the Chrome zip, unzip it, then `chrome://extensions` → toggle Developer mode → Load unpacked → pick the unzipped folder.
+- **Safari:** the bridge ships inside the ContextMint app; you enable it in Safari's settings. The ContextMint app has no public download yet, so there is no Safari install link to give — use Chrome for now.
+
+**Where it comes from.** ContextMint Bridge is the fetchproxy browser extension under its new name, from the same maintainer — fetchproxy's own README ([Extension](https://github.com/chrischall/fetchproxy#extension)) points to it. Its source is public at [nullnet-app/contextmint-bridge](https://github.com/nullnet-app/contextmint-bridge): build it yourself (its README covers `npm run build`), or check a release zip against the `.sha256` file published beside it:
 
 ```bash
-git clone https://github.com/chrischall/fetchproxy
-cd fetchproxy
-npm ci
-npm --workspace=@fetchproxy/extension-chrome run build
+shasum -a 256 -c contextmint-bridge-chrome-<version>.zip.sha256
 ```
-
-Then in Chrome: `chrome://extensions` → toggle Developer mode → Load unpacked → pick `packages/extension-chrome/dist/`.
 
 Open compass.com and sign in. That's all the auth this server needs.
 
@@ -101,12 +101,12 @@ Open compass.com and sign in. That's all the auth this server needs.
 
 ```
 ┌────────────────┐  stdio   ┌──────────────────┐   WS   ┌──────────────────┐    fetch()    ┌─────────────┐
-│ MCP client     │◀────────▶│  dist/bundle.js  │◀──────▶│  fetchproxy      │◀────────────▶│ compass.com  │
-│ (Claude, etc.) │          │  (Compass MCP)    │ :37149 │  extension       │   (real TLS, │ (your tab)  │
+│ MCP client     │◀────────▶│  dist/bundle.js  │◀──────▶│  ContextMint     │◀────────────▶│ compass.com  │
+│ (Claude, etc.) │          │  (Compass MCP)    │ :37149 │  Bridge          │   (real TLS, │ (your tab)  │
 └────────────────┘          └──────────────────┘        │  (separate)      │   cookies)    └─────────────┘
 ```
 
-The MCP server runs in Node, but every HTTP call to compass.com is dispatched into your live browser tab through the fetchproxy extension. Each request rides your existing session — TLS fingerprint, cookies, and JS execution context all match the page that's already on screen. No headless browser stand-in, no separate identity, no third-party proxy: just your real browser, acting on its own behalf, with the MCP server picking what to ask for.
+The MCP server runs in Node, but every HTTP call to compass.com is dispatched into your live browser tab through the ContextMint Bridge extension. Each request rides your existing session — TLS fingerprint, cookies, and JS execution context all match the page that's already on screen. No headless browser stand-in, no separate identity, no third-party proxy: just your real browser, acting on its own behalf, with the MCP server picking what to ask for.
 
 Compass's pages are SSR React with no public JSON API — every tool extracts data from inline-script globals (`global.uc.sharedReactAppProps` on search pages, `window.__INITIAL_DATA__.props.listingRelation.listing` on homedetails). The client wraps that into the tool surface so callers never have to parse HTML themselves.
 
