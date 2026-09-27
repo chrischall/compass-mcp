@@ -87,7 +87,13 @@ npm run build
 compass-mcp talks to your browser through the **ContextMint Bridge** extension, which is shared across every fetchproxy-based MCP (zillow-mcp, opentable-mcp, resy-mcp, …). Install it once from the [ContextMint Bridge releases](https://github.com/nullnet-app/contextmint-bridge/releases):
 
 - **Chrome:** download the Chrome zip, unzip it, then `chrome://extensions` → toggle Developer mode → Load unpacked → pick the unzipped folder.
-- **Safari:** the bridge ships inside the ContextMint app — install the app and enable the extension in Safari's settings.
+- **Safari:** the bridge ships inside the ContextMint app; you enable it in Safari's settings. The ContextMint app has no public download yet, so there is no Safari install link to give — use Chrome for now.
+
+**Where it comes from.** ContextMint Bridge is the fetchproxy browser extension under its new name, from the same maintainer — fetchproxy's own README ([Extension](https://github.com/chrischall/fetchproxy#extension)) points to it. Its source is public at [nullnet-app/contextmint-bridge](https://github.com/nullnet-app/contextmint-bridge): build it yourself (its README covers `npm run build`), or check a release zip against the `.sha256` file published beside it:
+
+```bash
+shasum -a 256 -c contextmint-bridge-chrome-<version>.zip.sha256
+```
 
 Open compass.com and sign in. That's all the auth this server needs.
 

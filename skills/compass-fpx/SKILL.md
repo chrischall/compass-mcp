@@ -35,7 +35,9 @@ fpx pair -p compass                          # prints a pair code → approve in
 ```
 
 Requirements: the **ContextMint Bridge** browser extension installed
-([releases](https://github.com/nullnet-app/contextmint-bridge/releases)), an open
+([releases](https://github.com/nullnet-app/contextmint-bridge/releases); it is the
+fetchproxy extension renamed, from the same maintainer, with public source and a
+`.sha256` beside each release zip), an open
 `www.compass.com` tab, and its Chrome **Site access** allowing `compass.com`.
 Pairing persists — after the first approval every later `fpx` call reuses it.
 

@@ -34,7 +34,9 @@ MCP server for Compass — natural-language access to listings, property records
 Get it from the [ContextMint Bridge releases](https://github.com/nullnet-app/contextmint-bridge/releases):
 
 - **Chrome:** unzip the Chrome zip, then `chrome://extensions` → Developer mode → Load unpacked → pick the unzipped folder.
-- **Safari:** the bridge ships inside the ContextMint app — install the app and enable the extension in Safari's settings.
+- **Safari:** the bridge ships inside the ContextMint app; you enable it in Safari's settings. The ContextMint app has no public download yet, so there is no Safari install link to give — use Chrome for now.
+
+ContextMint Bridge is the fetchproxy extension renamed, from the same maintainer ([fetchproxy's README](https://github.com/chrischall/fetchproxy#extension) points to it); its source is public, so build it yourself or verify a release zip with `shasum -a 256 -c contextmint-bridge-chrome-<version>.zip.sha256`.
 
 ### 3. Open compass.com and sign in.
 
