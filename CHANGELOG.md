@@ -1,5 +1,19 @@
 # Changelog
 
+## [1.1.5](https://github.com/chrischall/compass-mcp/compare/v1.1.4...v1.1.5) (2026-09-27)
+
+
+### Bug Fixes
+
+* **deps:** bump the production-dependencies group with 4 updates ([#255](https://github.com/chrischall/compass-mcp/issues/255)) ([f90dbbb](https://github.com/chrischall/compass-mcp/commit/f90dbbb5c37215ae0db2ae140e4af53b6a748c6e))
+* **deps:** move to [@fetchproxy](https://github.com/fetchproxy) 3.4 for ContextMint Bridge errors, capability subsets and managed pins ([#252](https://github.com/chrischall/compass-mcp/issues/252)) ([2fc5e93](https://github.com/chrischall/compass-mcp/commit/2fc5e9379bb5d684112c7f2b4dfb852d395a4e04))
+* **deps:** move to @chrischall/mcp-utils 2.8 and [@fetchproxy](https://github.com/fetchproxy) 3.4.1 for clearer browser-bridge errors ([#257](https://github.com/chrischall/compass-mcp/issues/257)) ([0f1c872](https://github.com/chrischall/compass-mcp/commit/0f1c87279067710445bc4f3f8a70021f909e6a82))
+
+
+### Documentation
+
+* **skills:** name ContextMint Bridge in the compass-fpx transport explanation ([#258](https://github.com/chrischall/compass-mcp/issues/258)) ([cbc2f3c](https://github.com/chrischall/compass-mcp/commit/cbc2f3c8397290d6501fbb762cc8acc95c349a2b))
+
 ## [1.1.4](https://github.com/chrischall/compass-mcp/compare/v1.1.3...v1.1.4) (2026-09-25)
 
 
