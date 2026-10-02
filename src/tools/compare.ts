@@ -8,12 +8,8 @@ import {
 import { runBoundedBatch } from '@chrischall/mcp-utils';
 import type { CompassClient } from '../client.js';
 import { minifiedResult } from '../mcp.js';
-import {
-  OVERALL_DEADLINE_MS,
-  guardClient,
-  pendingMessage,
-  type BulkTuning,
-} from './bounded-batch.js';
+import { guardMethods, pivotSummary, runRowBatch } from '@chrischall/realty-core';
+import { OVERALL_DEADLINE_MS, type BulkTuning } from './bounded-batch.js';
 import {
   fetchListingRecord,
   format,
@@ -37,21 +33,6 @@ interface CompareRow {
   listing_id_sha?: string;
   url?: string;
   property?: FormattedProperty;
-  error?: string;
-  /**
-   * Transport-fault marker (#73/#85). Present ONLY when the per-row
-   * failure was a bridge timeout (after the one-shot retry burned) or an
-   * unreachable bridge — categorically NOT a genuine no-listing. Mirrors
-   * the `compass_bulk_get` / `compass_resolve_addresses` discipline: a
-   * row with `status` is retryable, not a clean miss. A genuine miss
-   * (parse failure, restricted listing, protocol fault) carries only
-   * `error` with no `status`/`retryable`.
-   *
-   * `pending` (fleet-audit#927): the overall deadline cut the row off
-   * before it settled — also retryable, also NOT a miss.
-   */
-  status?: 'timeout' | 'bridge_down' | 'pending';
-  retryable?: true;
 }
 
 interface SummaryRow {
@@ -75,19 +56,10 @@ const SUMMARY_FIELDS: Array<keyof FormattedProperty> = [
   'localized_status',
 ];
 
-export function buildSummary(rows: CompareRow[]): SummaryRow[] {
-  return SUMMARY_FIELDS.map((field) => ({
-    field,
-    values: rows.map((r) =>
-      r.property
-        ? ((r.property as unknown as Record<string, unknown>)[field] as
-            | string
-            | number
-            | null
-            | undefined) ?? null
-        : null
-    ),
-  }));
+export function buildSummary(rows: ReadonlyArray<CompareRow>): SummaryRow[] {
+  // realty-core `pivotSummary` (fleet-audit#1091): the row's value
+  // verbatim, `undefined` / failed row → null.
+  return pivotSummary<FormattedProperty>(rows, SUMMARY_FIELDS) as SummaryRow[];
 }
 
 export function registerCompareTools(
@@ -101,7 +73,7 @@ export function registerCompareTools(
     {
       title: 'Compare Compass properties side-by-side',
       description:
-        "Fetch 2 or more Compass properties and align their facts side-by-side. Each target may supply `url` (a full Compass homedetails URL or path) or `listing_id_sha` alone — sha-only targets fetch /listing/<sha>/view, which redirects to the homedetails page. Returns the full per-property record per row (with `extracted_features` populated). Per-target errors are captured per-row — one bad target will not fail the whole call. Calls are concurrent, and the whole call is bounded by an overall deadline: any row still unsettled when it is reached comes back as `{ status: \"pending\", retryable: true, error }` with a top-level `pending` count — re-run just those targets. The raw `description` is omitted from each row by default — pass `include_description: true` to keep it. The redundant `summary` table is also opt-in via `include_summary: true` — by default only `results[]` is returned, which already carries every fact.",
+        "Fetch 2 or more Compass properties and align their facts side-by-side. Each target may supply `url` (a full Compass homedetails URL or path) or `listing_id_sha` alone — sha-only targets fetch /listing/<sha>/view, which redirects to the homedetails page. Returns the full per-property record per row (with `extracted_features` populated). Per-target errors are captured per-row — one bad target will not fail the whole call; a failed row carries `status` = `error_kind` (`timeout` / `bridge_down` / `protocol` / `other`), `retryable` and `error`, and the envelope reports `count` / `ok` / `errored`. Calls are concurrent, and the whole call is bounded by an overall deadline: any row still unsettled when it is reached comes back as `{ status: \"pending\", retryable: true, error }` with a top-level `pending` count — re-run just those targets. The raw `description` is omitted from each row by default — pass `include_description: true` to keep it. The redundant `summary` table is also opt-in via `include_summary: true` — by default only `results[]` is returned, which already carries every fact.",
       annotations: {
         title: 'Compare Compass properties side-by-side',
         readOnlyHint: true,
@@ -157,70 +129,34 @@ export function registerCompareTools(
       //
       // fleet-audit#927: `runBoundedBatch` bounds the whole call with an
       // overall deadline (unsettled rows come back `pending`) and
-      // `guardClient` stops abandoned rows dialling the bridge.
-      const rows: CompareRow[] = await runBoundedBatch<CompareTarget, CompareRow>(
+      //
+      // fleet-audit#1091: the row envelope is realty-core `runRowBatch`
+      // (see bulk-get.ts); `guardMethods` is the generalised #927 guard.
+      const envelope = await runRowBatch(
         ts,
         async (t, signal) => {
-          const rowClient = guardClient(client, signal);
-          try {
-            const { listing } = await retryOnceOnTimeout(() =>
-              fetchListingRecord(rowClient, t)
-            );
-            return {
-              listing_id_sha: listing.listingIdSHA,
-              url: listing.pageLink
-                ? `https://www.compass.com${listing.pageLink}`
-                : undefined,
-              property: format(listing, {
-                includeDescription: include_description,
-              }),
-            };
-          } catch (e) {
-            // Share the cohort-standard error contract with
-            // `compass_bulk_get` / `compass_resolve_addresses` (#73/#85).
-            // `classifyRowError` runs AFTER `retryOnceOnTimeout` has burned
-            // its one-shot retry, so a `timeout` here means the bridge
-            // stayed unresponsive across two attempts. A transport fault
-            // (timeout / bridge_down) is NOT a genuine miss — flag it
-            // `retryable` with a distinct `status`. `protocol` / `other`
-            // keep the plain `error` (genuine miss / parse failure).
-            const { kind, message } = classifyRowError(e);
-            const row: CompareRow = {
-              listing_id_sha: t.listing_id_sha,
-              url: t.url,
-              error: message,
-            };
-            if (kind === 'timeout' || kind === 'bridge_down') {
-              row.status = kind;
-              row.retryable = true;
-            }
-            return row;
-          }
+          const rowClient = guardMethods(client, signal, ['fetchHtml', 'fetchJson']);
+          const { listing } = await fetchListingRecord(rowClient, t);
+          return {
+            listing_id_sha: listing.listingIdSHA,
+            url: listing.pageLink
+              ? `https://www.compass.com${listing.pageLink}`
+              : undefined,
+            property: format(listing, {
+              includeDescription: include_description,
+            }),
+          };
         },
         {
+          kit: { runBoundedBatch, classifyRowError, retryOnceOnTimeout },
+          toolLabel: 'compass_compare_properties',
+          rowBase: (t) => ({ listing_id_sha: t.listing_id_sha, url: t.url }),
           deadlineMs: overallDeadlineMs,
           concurrency: BRIDGE_CONCURRENCY,
-          onTimeout: (t) => ({
-            listing_id_sha: t.listing_id_sha,
-            url: t.url,
-            status: 'pending',
-            retryable: true,
-            error: pendingMessage('compass_compare_properties'),
-          }),
         }
       );
-      const pending = rows.filter((r) => r.status === 'pending').length;
-      const body: {
-        count: number;
-        pending?: number;
-        summary?: SummaryRow[];
-        results: CompareRow[];
-      } = {
-        count: rows.length,
-        ...(pending > 0 ? { pending } : {}),
-        results: rows,
-      };
-      if (include_summary === true) body.summary = buildSummary(rows);
+      const body: typeof envelope & { summary?: SummaryRow[] } = envelope;
+      if (include_summary === true) body.summary = buildSummary(envelope.results);
       return minifiedResult(body);
     }
   );

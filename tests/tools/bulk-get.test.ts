@@ -205,7 +205,7 @@ describe('compass_bulk_get tool', () => {
     expect(parsed.rows[0].error).toMatch(/bridge unreachable/);
   });
 
-  it('keeps a genuine miss (no transport fault) as a plain error, with no status/retryable', async () => {
+  it('classifies a genuine miss as a NON-retryable error kind (cohort row envelope, fleet-audit#1091)', async () => {
     // A protocol error and a plain Error are both "the lookup completed
     // and there's no listing here / parse failure" — they MUST stay
     // un-flagged so a caller treats them as real misses, not retries.
@@ -228,14 +228,14 @@ describe('compass_bulk_get tool', () => {
         retryable?: boolean;
       }>;
     }>(r);
-    // protocol → bare message, no status/retryable
+    // protocol → its own kind, not retryable (a real miss, not a blip)
     expect(parsed.rows[0].error).toBe('no signed-in tab');
-    expect(parsed.rows[0].status).toBeUndefined();
-    expect(parsed.rows[0].retryable).toBeUndefined();
-    // genuine miss (plain Error) → message preserved, no status/retryable
+    expect(parsed.rows[0]).toMatchObject({ status: 'protocol', error_kind: 'protocol', retryable: false });
+    // genuine miss (plain Error) → message preserved, kind `other`, not retryable
     expect(parsed.rows[1].error).toMatch(/listing missing/);
-    expect(parsed.rows[1].status).toBeUndefined();
-    expect(parsed.rows[1].retryable).toBeUndefined();
+    expect(parsed.rows[1]).toMatchObject({ status: 'other', error_kind: 'other', retryable: false });
+    // Envelope counts.
+    expect(parseToolResult<{ ok: number; errored: number }>(r)).toMatchObject({ ok: 0, errored: 2 });
   });
 
   it('caps in-flight fetches at BRIDGE_CONCURRENCY (=6)', async () => {

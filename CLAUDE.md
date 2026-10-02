@@ -45,7 +45,7 @@ src/
   page-state.ts         # extractUc + extractInitialData + extractAgentProfile + balanced-brace helpers
   url.ts                # extractPidFromUrl + extractAgentSlug + agentProfilePath
                         #   (urlToPath + locationToSlug re-exported from realty-core)
-  features.ts           # loadCommunities (local FS read of COMPASS_COMMUNITIES_FILE)
+  features.ts           # loadCommunities (mcp-utils createCachedJsonArrayLoader over COMPASS_COMMUNITIES_FILE)
                         #   + re-exports extractFeatures/ExtractedFeatures from realty-core
                         #   (used by tools/properties.ts to keyword-parse listing prose)
   mcp.ts                # textResult() result-wrapper
@@ -58,12 +58,13 @@ src/
     bulk-get.ts         # compass_bulk_get (concurrent get_property, ≤200, no summary)
     comparable-rentals.ts # compass_get_comparable_rentals (locality → rentals search)
     saved.ts            # compass_get_saved_homes + compass_get_saved_searches (stubs)
-    mortgage.ts         # compass_calculate_mortgage (realty-core calculateMortgage + adapter)
-    affordability.ts    # compass_calculate_affordability (realty-core calculateAffordability)
+    mortgage.ts         # compass_calculate_mortgage (realty-core registerMortgageTool, lean shape)
+    affordability.ts    # compass_calculate_affordability (realty-core registerAffordabilityTool)
     by-address.ts       # compass_get_by_address (address → canonical URL + ids; typeahead rung)
     resolve-addresses.ts # compass_resolve_addresses (bulk by-address, shared rung walker)
-    bounded-batch.ts    # overall deadline + `pending` rows + abort-guarded client shared by
-                        #   bulk_get / compare / resolve_addresses (runBoundedBatch, 45s)
+    bounded-batch.ts    # OVERALL_DEADLINE_MS (45s) + BulkTuning shared by bulk_get / compare /
+                        #   resolve_addresses; the row envelope + abort guard are realty-core
+                        #   runRowBatch / guardMethods
     typeahead.ts        # omnisuggest autocomplete helpers (WAF-immune resolution rung)
     agent-listings.ts   # compass_get_agent_listings (/agents/<slug>/ __AGENT_PROFILE__ → active + closed listings)
     healthcheck.ts      # compass_healthcheck — thin wiring of mcp-utils'

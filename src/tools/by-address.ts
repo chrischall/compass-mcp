@@ -5,6 +5,7 @@ import {
   FetchproxyTimeoutError,
 } from '@chrischall/mcp-utils/fetchproxy';
 import {
+  addressMatch,
   FIRST_DIGIT_TO_STATES,
   normalizeAddressForCompare,
   SUFFIX_PAIRS,
@@ -147,14 +148,22 @@ export function normalizeAddressForMatch(s: string | undefined): string {
 
 /**
  * Decide whether the candidate's address string actually matches the
- * caller's query. The candidate must contain every normalized token
- * from the query.address (street line), AND at least one numeric token
- * must be present (guards against matching on city/state words alone).
- * A supplied `city` must appear in full. A supplied `state`/`zip` need
- * not appear — Compass's card subtitles often drop the ZIP, and some
- * listings drop the state — but a candidate that carries a DIFFERENT
- * state or ZIP is rejected (fleet-audit#65: a `{address, state, zip}`
- * row with no city used to accept the same street in another state).
+ * caller's query.
+ *
+ * The street line goes through realty-core's cohort `addressMatch`
+ * (fleet-audit#994) — the same policy zillow / redfin / homes / onehome
+ * use: anchored house number, unit stripped from the query (a portal's
+ * street line drops it) but a conflicting unit on both sides rejects,
+ * directional / name-word gates, strict-majority token overlap. compass
+ * additionally requires a house number at all (a bare street name
+ * matches too aggressively).
+ *
+ * What stays compass-specific are the LOCALITY gates: a supplied `city`
+ * must appear in full; a supplied `state`/`zip` need not appear —
+ * Compass's card subtitles often drop the ZIP, and some listings drop the
+ * state — but a candidate that carries a DIFFERENT state or ZIP is
+ * rejected (fleet-audit#65: a `{address, state, zip}` row with no city
+ * used to accept the same street in another state).
  *
  * Exported for direct unit-testing of the match policy.
  */
@@ -164,10 +173,6 @@ export function addressMatchesQuery(
 ): boolean {
   const cand = normalizeAddressForMatch(candidate);
   if (!cand) return false;
-  // Split candidate into whole tokens. We compare token-equality rather
-  // than substring containment to avoid prefix collisions like "12"
-  // matching inside "1234" or "Lee" matching inside "Leesburg" — the
-  // very class of silent wrong-match this PR is closing (issue #45).
   const candTokenSet = new Set(cand.split(' ').filter((t) => t.length > 0));
   const streetTokens = normalizeAddressForMatch(query.address)
     .split(' ')
@@ -176,9 +181,7 @@ export function addressMatchesQuery(
   // Require at least one numeric token in the street — a street name
   // alone ("Main St") matches too aggressively.
   if (!streetTokens.some((t) => /\d/.test(t))) return false;
-  // Every street-line token must appear in the candidate as a whole
-  // token.
-  if (!streetTokens.every((t) => candTokenSet.has(t))) return false;
+  if (!addressMatch(query.address, candidate ?? '').matched) return false;
   // If a city is given and the candidate has more than just the street
   // (i.e. there are extra tokens), require the city to be present too —
   // this is the gate that rejects the Charlotte-condo case where the

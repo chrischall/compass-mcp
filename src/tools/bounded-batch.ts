@@ -1,5 +1,3 @@
-import type { CompassClient } from '../client.js';
-
 /**
  * Shared overall-deadline plumbing for the three bridge fan-out tools
  * (`compass_bulk_get`, `compass_compare_properties`,
@@ -12,6 +10,12 @@ import type { CompassClient } from '../client.js';
  * complete, instead of running past the MCP client's ~60s request deadline
  * (`-32001`) and losing all of them. Same contract as the redfin / zillow /
  * homes siblings.
+ *
+ * The rest of the plumbing — the row envelope, `pending` message and the
+ * abandoned-row client guard (formerly `guardClient` / `pendingMessage` /
+ * `DeadlineAbandonedError` here) — is realty-core's `runRowBatch` /
+ * `pendingRowMessage` / `guardMethods` / `RowAbandonedError`
+ * (fleet-audit#1091), tested there.
  */
 
 /**
@@ -27,54 +31,4 @@ export const OVERALL_DEADLINE_MS = 45_000;
  */
 export interface BulkTuning {
   overallDeadlineMs?: number;
-}
-
-/** Human-readable message carried on every `pending` row. */
-export function pendingMessage(toolName: string): string {
-  return (
-    `${toolName} overall deadline reached before this row settled — the ` +
-    'lookup is still pending (likely a slow or hung browser tab), NOT a ' +
-    'missing listing. Re-run just the pending rows.'
-  );
-}
-
-/** Thrown in place of a bridge request once the batch has been abandoned. */
-export class DeadlineAbandonedError extends Error {
-  constructor() {
-    super('overall deadline reached; request not sent');
-    this.name = 'DeadlineAbandonedError';
-  }
-}
-
-/**
- * Wrap `client` so its bridge-dialling methods refuse to start once
- * `signal` is aborted.
- *
- * `runBoundedBatch` aborts the signal when the deadline fires, but its
- * runners keep dequeuing queued items (mcp-utils <= 2.6), and an in-flight
- * row can still walk on to its next request (the address resolver makes up
- * to three per row). Guarding at the client covers both: after the call has
- * returned `pending` rows, nothing else goes out through the user's
- * browser tab (the redfin fleet-audit finding on the same pattern).
- */
-export function guardClient(
-  client: CompassClient,
-  signal: AbortSignal | undefined
-): CompassClient {
-  if (!signal) return client;
-  const guarded = new Set<PropertyKey>(['fetchHtml', 'fetchJson']);
-  return new Proxy(client, {
-    get(target, prop) {
-      const value = Reflect.get(target, prop, target) as unknown;
-      if (typeof value !== 'function') return value;
-      const fn = value as (...args: unknown[]) => unknown;
-      if (!guarded.has(prop)) return fn.bind(target);
-      return (...args: unknown[]) => {
-        if (signal.aborted) {
-          return Promise.reject(new DeadlineAbandonedError());
-        }
-        return fn.apply(target, args);
-      };
-    },
-  });
 }

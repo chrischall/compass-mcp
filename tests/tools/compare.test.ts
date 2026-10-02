@@ -321,7 +321,7 @@ describe('compass_compare_properties tool', () => {
     expect(parsed.results[0].error).toMatch(/bridge unreachable/);
   });
 
-  it('keeps a genuine miss (no transport fault) as a plain error, with no status/retryable', async () => {
+  it('classifies a genuine miss as a NON-retryable error kind (cohort row envelope, fleet-audit#1091)', async () => {
     let n = 0;
     mockFetchHtml.mockImplementation(async () => {
       n++;
@@ -337,14 +337,14 @@ describe('compass_compare_properties tool', () => {
     const parsed = parseToolResult<{
       results: Array<{ error?: string; status?: string; retryable?: boolean }>;
     }>(r);
-    // protocol → bare message, no status/retryable
+    // protocol → its own kind, not retryable (a real miss, not a blip)
     expect(parsed.results[0].error).toBe('no signed-in tab');
-    expect(parsed.results[0].status).toBeUndefined();
-    expect(parsed.results[0].retryable).toBeUndefined();
-    // genuine miss (plain Error) → message preserved, no status/retryable
+    expect(parsed.results[0]).toMatchObject({ status: 'protocol', error_kind: 'protocol', retryable: false });
+    // genuine miss (plain Error) → message preserved, kind `other`, not retryable
     expect(parsed.results[1].error).toMatch(/listing missing/);
-    expect(parsed.results[1].status).toBeUndefined();
-    expect(parsed.results[1].retryable).toBeUndefined();
+    expect(parsed.results[1]).toMatchObject({ status: 'other', error_kind: 'other', retryable: false });
+    // Envelope counts.
+    expect(parseToolResult<{ ok: number; errored: number }>(r)).toMatchObject({ ok: 0, errored: 2 });
   });
 });
 

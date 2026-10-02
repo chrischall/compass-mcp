@@ -8,12 +8,8 @@ import {
 import { runBoundedBatch } from '@chrischall/mcp-utils';
 import type { CompassClient } from '../client.js';
 import { minifiedResult } from '../mcp.js';
-import {
-  OVERALL_DEADLINE_MS,
-  guardClient,
-  pendingMessage,
-  type BulkTuning,
-} from './bounded-batch.js';
+import { guardMethods, pendingRowMessage } from '@chrischall/realty-core';
+import { OVERALL_DEADLINE_MS, type BulkTuning } from './bounded-batch.js';
 import { extractPidFromUrl } from '../url.js';
 import {
   buildAddressQuery,
@@ -230,11 +226,12 @@ export function registerResolveAddressesTools(
       // fleet-audit#927: each row can make three bridge calls, so this is
       // the tool most likely to outrun the MCP client's request deadline.
       // `runBoundedBatch` bounds the whole call (unsettled rows come back
-      // `pending`) and `guardClient` stops an abandoned row from walking
+      // `pending`) and realty-core `guardMethods` stops an abandoned row from walking
       // on to its next rung — or a queued row from starting at all.
       const rows = await runBoundedBatch<ByAddressInput, RowResult>(
         addresses as ByAddressInput[],
-        (a, signal) => resolveOne(guardClient(client, signal), a),
+        (a, signal) =>
+          resolveOne(guardMethods(client, signal, ['fetchHtml', 'fetchJson']), a),
         {
           deadlineMs: overallDeadlineMs,
           concurrency: BRIDGE_CONCURRENCY,
@@ -242,7 +239,7 @@ export function registerResolveAddressesTools(
             resolved: false,
             status: 'pending',
             retryable: true,
-            error: pendingMessage('compass_resolve_addresses'),
+            error: pendingRowMessage('compass_resolve_addresses'),
             query: buildAddressQuery(a),
           }),
         }

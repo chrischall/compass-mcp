@@ -8,12 +8,8 @@ import {
 import { runBoundedBatch } from '@chrischall/mcp-utils';
 import type { CompassClient } from '../client.js';
 import { minifiedResult } from '../mcp.js';
-import {
-  OVERALL_DEADLINE_MS,
-  guardClient,
-  pendingMessage,
-  type BulkTuning,
-} from './bounded-batch.js';
+import { guardMethods, runRowBatch } from '@chrischall/realty-core';
+import { OVERALL_DEADLINE_MS, type BulkTuning } from './bounded-batch.js';
 import {
   fetchListingRecord,
   format,
@@ -47,26 +43,6 @@ export interface BulkGetTarget {
   url?: string;
 }
 
-interface BulkGetRow {
-  listing_id_sha?: string;
-  url?: string;
-  property?: FormattedProperty;
-  error?: string;
-  /**
-   * Transport-fault marker (issue #73). Present ONLY when the per-row
-   * failure was a bridge timeout (after the one-shot retry burned) or
-   * an unreachable bridge — categorically NOT a genuine no-listing.
-   * Mirrors the `compass_resolve_addresses` discipline (#85): a row
-   * with `status` is retryable, not a clean miss. A genuine miss
-   * (parse failure, restricted listing, protocol fault) carries only
-   * `error` with no `status`/`retryable`.
-   *
-   * `pending` (fleet-audit#927): the overall deadline cut the row off
-   * before it settled — also retryable, also NOT a miss.
-   */
-  status?: 'timeout' | 'bridge_down' | 'pending';
-  retryable?: true;
-}
 
 export function registerBulkGetTools(
   server: McpServer,
@@ -81,14 +57,13 @@ export function registerBulkGetTools(
       description:
         `Fetch up to ${BULK_GET_MAX} Compass listings in a single call. Returns one structured row per input target ` +
         '(no side-by-side summary table — use `compass_compare_properties` for that). Each row is either ' +
-        '`{ listing_id_sha, url, property }` on success or `{ listing_id_sha, url, error }` on failure — one bad ' +
-        'target never fails the whole call. When the failure was a bridge timeout (after one retry) or an unreachable ' +
-        'bridge (issue #73), the row also carries `{ status: "timeout" | "bridge_down", retryable: true }` — that is NOT ' +
-        'a missing listing, so retry it (a cold bridge usually succeeds on the second call) rather than concluding ' +
-        'Compass has no record. Targets accept the same `url` / `listing_id_sha` shape as `compass_get_property`. ' +
+        '`{ listing_id_sha, url, status: "ok", property }` on success or `{ listing_id_sha, url, status, error_kind, retryable, error }` ' +
+        'on failure (`status` = `error_kind`) — one bad target never fails the whole call. `retryable: true` (a bridge `timeout` after ' +
+        'one retry, an unreachable `bridge_down`, issue #73) is NOT a missing listing, so retry it (a cold bridge usually succeeds on the ' +
+        'second call) rather than concluding Compass has no record; `protocol` / `other` are real misses. Targets accept the same `url` / `listing_id_sha` shape as `compass_get_property`. ' +
         'Calls fan out concurrently. The whole call is bounded by an overall deadline: a slow or hung row never wedges it — ' +
         'any row still unsettled when the deadline is reached comes back as `{ status: "pending", retryable: true, error }` ' +
-        'alongside a top-level `pending` count, so re-run just those targets. `extracted_features` is populated per row. The raw `description` is omitted by ' +
+        'alongside a top-level `pending` count, so re-run just those targets. The envelope also reports `count` / `ok` / `errored`. `extracted_features` is populated per row. The raw `description` is omitted by ' +
         'default — pass `include_description: true` to keep it.',
       annotations: {
         title: 'Bulk-fetch Compass listings',
@@ -142,64 +117,40 @@ export function registerBulkGetTools(
       // fleet-audit#927: `runBoundedBatch` adds an overall deadline so a
       // stale tab can't hold the call past the MCP client's request
       // deadline and lose every completed row; unsettled rows come back
-      // `pending`. `guardClient` stops abandoned rows dialling the bridge.
-      const rows: BulkGetRow[] = await runBoundedBatch<BulkGetTarget, BulkGetRow>(
+      // `pending`.
+      //
+      // fleet-audit#1091: realty-core `runRowBatch` owns the envelope —
+      // input-ordered rows, `pending` backfill, error rows classified with
+      // `status` = `error_kind` + `retryable` (timeout / bridge_down /
+      // pending retryable; protocol / other a real miss), and
+      // `{ count, ok, errored, pending?, rows }`. `guardMethods` (the
+      // generalised #927 `guardClient`) stops an abandoned row dialling
+      // the bridge.
+      const envelope = await runRowBatch(
         ts,
         async (t, signal) => {
-          const rowClient = guardClient(client, signal);
-          const row: BulkGetRow = {
-            listing_id_sha: t.listing_id_sha,
-            url: t.url,
-          };
-          try {
-            const { listing } = await retryOnceOnTimeout(() =>
-              fetchListingRecord(rowClient, t)
-            );
-            row.listing_id_sha = listing.listingIdSHA;
-            row.url = listing.pageLink
+          const rowClient = guardMethods(client, signal, ['fetchHtml', 'fetchJson']);
+          const { listing } = await fetchListingRecord(rowClient, t);
+          return {
+            listing_id_sha: listing.listingIdSHA,
+            url: listing.pageLink
               ? `https://www.compass.com${listing.pageLink}`
-              : row.url;
-            row.property = format(listing, {
+              : t.url,
+            property: format(listing, {
               includeDescription: include_description,
-            });
-          } catch (e) {
-            // #73: classify the per-row failure with the cohort-standard
-            // `classifyRowError` (@fetchproxy/server) instead of an
-            // ad-hoc `e.message`. It runs AFTER `retryOnceOnTimeout` has
-            // already burned its one-shot retry, so a `timeout` here
-            // means the bridge stayed unresponsive across two attempts.
-            // A transport fault (timeout / bridge_down) is NOT a genuine
-            // miss — flag it `retryable` with a distinct `status` so a
-            // caller never reads a cold-bridge blip as "Compass has no
-            // listing". `protocol` / `other` keep the plain `error`
-            // (genuine miss / parse failure), preserving prior behavior.
-            const { kind, message } = classifyRowError(e);
-            row.error = message;
-            if (kind === 'timeout' || kind === 'bridge_down') {
-              row.status = kind;
-              row.retryable = true;
-            }
-          }
-          return row;
+            }),
+          };
         },
         {
+          kit: { runBoundedBatch, classifyRowError, retryOnceOnTimeout },
+          toolLabel: 'compass_bulk_get',
+          rowBase: (t) => ({ listing_id_sha: t.listing_id_sha, url: t.url }),
           deadlineMs: overallDeadlineMs,
           concurrency: BRIDGE_CONCURRENCY,
-          onTimeout: (t) => ({
-            listing_id_sha: t.listing_id_sha,
-            url: t.url,
-            status: 'pending',
-            retryable: true,
-            error: pendingMessage('compass_bulk_get'),
-          }),
+          resultsKey: 'rows',
         }
       );
-      const pending = rows.filter((r) => r.status === 'pending').length;
-      return minifiedResult({
-        count: rows.length,
-        ...(pending > 0 ? { pending } : {}),
-        rows,
-      });
+      return minifiedResult(envelope);
     }
   );
 }
