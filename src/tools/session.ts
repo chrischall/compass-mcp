@@ -46,5 +46,12 @@ export function registerSessionTools(
   registerSharedSessionTools(server, registry, {
     prefix: 'compass',
     serviceLabel: 'Compass',
+    // Nothing in compass-mcp reads the registry to route a request — every
+    // call rides the one bound browser tab — so the descriptions must not
+    // promise routing (fleet-audit#1092).
+    routing: 'label-only',
+    labelOnlyNote:
+      'Every compass tool call goes through whichever browser tab the ContextMint Bridge ' +
+      'extension is signed into; to read a different account, sign that tab into it.',
   });
 }

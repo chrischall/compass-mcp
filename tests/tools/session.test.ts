@@ -142,3 +142,16 @@ describe('compass_set_active_session', () => {
     expect(text).toMatch(/unknown session_id/i);
   });
 });
+
+describe('session tool descriptions are label-only (fleet-audit#1092)', () => {
+  it('none of the trio promises routing or a per-call session_id override', async () => {
+    const tools = (await h.listTools()).filter((t) => t.name.includes('session'));
+    expect(tools).toHaveLength(3);
+    for (const t of tools) {
+      expect(t.description).not.toMatch(/route/i);
+      expect(t.description).not.toMatch(/override/i);
+      expect(t.description).toMatch(/label only/i);
+      expect(t.description).toMatch(/browser tab/);
+    }
+  });
+});

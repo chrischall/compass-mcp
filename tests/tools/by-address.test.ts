@@ -132,6 +132,35 @@ describe('addressMatchesQuery', () => {
     expect(addressMatchesQuery(undefined, { address: '126 Sleeping Bear Ln' })).toBe(false);
   });
 
+  describe('street-line policy is realty-core addressMatch (fleet-audit#994)', () => {
+    it('accepts a candidate that drops the query unit (portals return the street line only)', () => {
+      expect(
+        addressMatchesQuery('155 Quail Cove Blvd, Lake Lure, NC 28746', {
+          address: '155 Quail Cove Blvd Unit 1601',
+          city: 'Lake Lure',
+        })
+      ).toBe(true);
+    });
+
+    it('rejects a candidate whose unit conflicts with the query unit', () => {
+      expect(
+        addressMatchesQuery('155 Quail Cove Blvd, Unit 1602, Lake Lure, NC', {
+          address: '155 Quail Cove Blvd Unit 1601',
+          city: 'Lake Lure',
+        })
+      ).toBe(false);
+    });
+
+    it('rejects a conflicting directional', () => {
+      expect(
+        addressMatchesQuery('10 South Main St, Lake Lure, NC', {
+          address: '10 N Main St',
+          city: 'Lake Lure',
+        })
+      ).toBe(false);
+    });
+  });
+
   // Issue #55 review: substring vs. whole-token matching.
   // `cand.includes(t)` lets a short query number/token match inside a
   // longer candidate token (e.g. "12" inside "1234", "Lee" inside

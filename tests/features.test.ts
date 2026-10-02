@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import {
   DEFAULT_COMMUNITIES,
   extractFeatures,
@@ -248,5 +248,21 @@ describe('loadCommunities', () => {
     writeFileSync(path, JSON.stringify({ not: 'an array' }));
     process.env.COMPASS_COMMUNITIES_FILE = path;
     expect(loadCommunities()).toEqual(DEFAULT_COMMUNITIES);
+  });
+
+  it('negative-caches a bad path: one stderr warning, not one per call (fleet-audit#993)', () => {
+    process.env.COMPASS_COMMUNITIES_FILE = join(tmpRoot, 'missing-negative-cache.json');
+    const spy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    try {
+      for (let i = 0; i < 5; i++) expect(loadCommunities()).toEqual(DEFAULT_COMMUNITIES);
+      expect(spy).toHaveBeenCalledTimes(1);
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  it('defaults to the shared realty-core vocabulary (fleet-audit#1175)', async () => {
+    const core = await import('@chrischall/realty-core');
+    expect(DEFAULT_COMMUNITIES).toEqual([...core.DEFAULT_COMMUNITIES]);
   });
 });
