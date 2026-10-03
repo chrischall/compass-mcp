@@ -1,5 +1,15 @@
 # Changelog
 
+## [1.1.6](https://github.com/chrischall/compass-mcp/compare/v1.1.5...v1.1.6) (2026-10-03)
+
+
+### Bug Fixes
+
+* **deps:** adopt @chrischall/mcp-utils 2.12.0 and realty-core 0.5.1 shared tools ([#262](https://github.com/chrischall/compass-mcp/issues/262)) ([8b3effd](https://github.com/chrischall/compass-mcp/commit/8b3effdd2c4ae3c07c7aac77e0fc1603802b1658))
+* **deps:** bump @chrischall/mcp-utils to 2.13.0 and realty-core to 0.6.0 ([#263](https://github.com/chrischall/compass-mcp/issues/263)) ([643781a](https://github.com/chrischall/compass-mcp/commit/643781a83d2f270879cb89532f73d98f119b3d41))
+* keep credentials and report edge_blocked on CDN/WAF blocks (mcp-utils 2.10.0) ([#261](https://github.com/chrischall/compass-mcp/issues/261)) ([fab0bd5](https://github.com/chrischall/compass-mcp/commit/fab0bd56da51969cecb315970025cdecfd9f369d))
+* report CDN/WAF blocks as edge_blocked, not a rejected credential (mcp-utils 2.9.0) ([#259](https://github.com/chrischall/compass-mcp/issues/259)) ([9478b7e](https://github.com/chrischall/compass-mcp/commit/9478b7e3b5f011b980226fad791f27b57e4ea0f8))
+
 ## [1.1.5](https://github.com/chrischall/compass-mcp/compare/v1.1.4...v1.1.5) (2026-09-27)
 
 
