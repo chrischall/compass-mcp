@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.1.8](https://github.com/chrischall/compass-mcp/compare/v1.1.7...v1.1.8) (2026-10-07)
+
+
+### Bug Fixes
+
+* **deps:** bump source-map-js ([#271](https://github.com/chrischall/compass-mcp/issues/271)) ([6f4108f](https://github.com/chrischall/compass-mcp/commit/6f4108f90a31324e5b8aa823bb5939f86215bdc8))
+* **deps:** pick up fetchproxy 3.6 relay fixes and the mcp-utils confirmation opt-out ([#269](https://github.com/chrischall/compass-mcp/issues/269)) ([3a282a8](https://github.com/chrischall/compass-mcp/commit/3a282a82f46d256f98263098fbf5fc4db19d4fa8))
+
 ## [1.1.7](https://github.com/chrischall/compass-mcp/compare/v1.1.6...v1.1.7) (2026-10-05)
 
 
