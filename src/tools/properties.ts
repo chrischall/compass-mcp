@@ -383,11 +383,77 @@ export function buildPath(args: {
   listing_id_sha?: string;
   url?: string;
 }): string | null {
-  if (args.url) return urlToPath(args.url);
-  if (args.listing_id_sha) return null;
+  if (args.url) return assertListingPath(urlToPath(args.url), args.url);
+  if (args.listing_id_sha) {
+    assertListingSha(args.listing_id_sha);
+    return null;
+  }
   throw new Error(
     'compass property tool: must provide either listing_id_sha or url'
   );
+}
+
+/**
+ * A Compass listing id: the numeric `listingIdSHA` (letters, `_` and `-`
+ * tolerated). Anything carrying `/`, `.`, `?`, `%` or whitespace could
+ * steer `/listing/<sha>/view` onto another compass.com path.
+ */
+const LISTING_SHA_RE = /^[A-Za-z0-9_-]+$/;
+
+function assertListingSha(sha: string): void {
+  if (!LISTING_SHA_RE.test(sha)) {
+    throw new Error(
+      `compass property tool: "${sha}" is not a valid Compass listing_id_sha ` +
+        '(expected letters, digits, "_" or "-" — e.g. "1887095624271872617").'
+    );
+  }
+}
+
+/**
+ * The listing route families a property tool may fetch: a homedetails
+ * page ending in a `<sha>_lid` or `<pid>_pid` segment (the `_pid/` prefix
+ * varies), or the `/listing/<sha>/view` redirect. Slug segments may
+ * carry `.`, `~` and percent-escapes, but `isTraversalSafe` rejects any
+ * segment that decodes to `.`/`..` or to a slash, so the browser cannot
+ * normalise the path onto another compass.com route.
+ */
+const LISTING_PATH_RES: readonly RegExp[] = [
+  /^\/(?:[A-Za-z0-9_.~%-]+\/)*[A-Za-z0-9-]+_(?:lid|pid)\/?$/,
+  /^\/listing\/[A-Za-z0-9_-]+\/view\/?$/,
+];
+
+/**
+ * Restrict a caller-supplied `url` to the listing routes (fleet-audit#386):
+ * the tools fetch with the user's signed-in session and echo error bodies,
+ * so an arbitrary path (`/api/v3/…`, `../../account/…`) must not reach
+ * the bridge. A query string is kept; only the pathname is checked.
+ */
+function isTraversalSafe(pathname: string): boolean {
+  return pathname.split('/').every((segment) => {
+    let decoded: string;
+    try {
+      decoded = decodeURIComponent(segment);
+    } catch {
+      return false;
+    }
+    return decoded !== '.' && decoded !== '..' && !/[/\\]/.test(decoded);
+  });
+}
+
+function assertListingPath(path: string, original: string): string {
+  const pathname = path.split(/[?#]/, 1)[0]!;
+  if (
+    !LISTING_PATH_RES.some((re) => re.test(pathname)) ||
+    !isTraversalSafe(pathname)
+  ) {
+    throw new Error(
+      `compass property tool: "${original}" is not a Compass listing URL. ` +
+        'Expected a homedetails URL ending in `<id>_lid/` or `<id>_pid/` ' +
+        '(e.g. https://www.compass.com/homedetails/<slug>/<sha>_lid/), ' +
+        'or pass `listing_id_sha` instead.'
+    );
+  }
+  return path;
 }
 
 /**
@@ -420,6 +486,7 @@ export async function resolvePathFromSha(
   _client: CompassClient,
   sha: string
 ): Promise<string> {
+  assertListingSha(sha);
   return `/listing/${sha}/view`;
 }
 
