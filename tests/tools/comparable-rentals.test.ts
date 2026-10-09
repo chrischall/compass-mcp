@@ -146,4 +146,53 @@ describe('compass_get_comparable_rentals', () => {
     const parsed = parseToolResult<{ count: number }>(r);
     expect(parsed.count).toBe(0);
   });
+  // fleet-audit#385: the rental cards are search cards, so they follow the
+  // same `view` convention as compass_search_properties.
+  describe('view', () => {
+    const withMedia = async (path: string) =>
+      path.includes('_lid')
+        ? homedetailsHtml({
+            listingIdSHA: 'target',
+            pageLink: '/h/target_lid/',
+            location: { city: 'Lake Lure', state: 'NC', zipCode: '28746' },
+          })
+        : rentalSearchHtml([
+            {
+              listing: {
+                listingIdSHA: 'r1',
+                pageLink: '/h/r1_lid/',
+                title: '$3,500/mo',
+                subtitles: ['1 Lake Way', 'Lake Lure, NC 28746'],
+                media: [
+                  {
+                    category: 0,
+                    originalUrl: 'https://cdn.example/r1/origin',
+                    thumbnailUrl: 'https://cdn.example/r1/thumb',
+                  },
+                ],
+              },
+            },
+          ]);
+
+    it('drops the per-rental media URLs in the default compact view', async () => {
+      mockFetchHtml.mockImplementation(withMedia);
+      const r = await harness.callTool('compass_get_comparable_rentals', {
+        url: '/h/target_lid/',
+      });
+      const parsed = parseToolResult<{ rentals: Array<Record<string, unknown>> }>(r);
+      expect(parsed.rentals[0]!.listing_id_sha).toBe('r1');
+      expect(parsed.rentals[0]).not.toHaveProperty('primary_photo_url');
+      expect(parsed.rentals[0]).not.toHaveProperty('primary_thumbnail_url');
+    });
+
+    it('keeps them with view: "full"', async () => {
+      mockFetchHtml.mockImplementation(withMedia);
+      const r = await harness.callTool('compass_get_comparable_rentals', {
+        url: '/h/target_lid/',
+        view: 'full',
+      });
+      const parsed = parseToolResult<{ rentals: Array<Record<string, unknown>> }>(r);
+      expect(parsed.rentals[0]!.primary_photo_url).toBe('https://cdn.example/r1/origin');
+    });
+  });
 });

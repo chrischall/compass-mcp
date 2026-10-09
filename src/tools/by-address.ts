@@ -207,11 +207,20 @@ export function addressMatchesQuery(
     if (candZips.length > 0 && !candZips.includes(queryZip)) return false;
   }
   // State gate: same shape. Only upper-case two-letter US state codes in
-  // the raw candidate count ("NC", not the "La" of "La Jolla"), minus the
-  // street line's own tokens (a "NE" directional, a "Ct" suffix).
+  // the candidate's LOCALITY count ("NC", not the "La" of "La Jolla"),
+  // minus the query street line's own tokens (a "Ct" suffix). The
+  // candidate's own street line — everything before its first comma —
+  // never counts, so a street quadrant the caller did not type ("123
+  // Main St NE, Washington") is not read as Nebraska (fleet-audit#991).
+  // A comma-less candidate has no separable locality, so its quadrant
+  // tokens are dropped instead.
   const queryState = query.state?.trim().toUpperCase();
   if (queryState && US_STATE_CODES.has(queryState)) {
-    const candStates = [...(candidate ?? '').matchAll(/\b[A-Z]{2}\b/g)]
+    const raw = candidate ?? '';
+    const comma = raw.indexOf(',');
+    const locality =
+      comma >= 0 ? raw.slice(comma + 1) : raw.replace(/\b(?:NE|NW|SE|SW)\b/g, ' ');
+    const candStates = [...locality.matchAll(/\b[A-Z]{2}\b/g)]
       .map((m) => m[0])
       .filter(
         (t) => US_STATE_CODES.has(t) && !streetTokenSet.has(t.toLowerCase())

@@ -1,7 +1,7 @@
 import { z } from 'zod';
 import type { McpServer } from '@modelcontextprotocol/server';
 import type { CompassClient } from '../client.js';
-import { minifiedResult } from '../mcp.js';
+import { viewArg, viewResponse } from '../view.js';
 import { extractPidFromUrl } from '../url.js';
 import {
   fetchListingRecord,
@@ -180,11 +180,12 @@ export function registerHistoryTools(
           .string()
           .optional()
           .describe(
-            'Compass listing identifier. Sufficient on its own — the tool resolves the address slug internally via site search before fetching.'
+            'Compass listing identifier (the SHA inside `<sha>_lid`). Sufficient on its own — the tool fetches /listing/<sha>/view, which 302-redirects to the slugged homedetails page (no extra lookup).'
           ),
+        view: viewArg(),
       }),
     },
-    async ({ url, listing_id_sha }) => {
+    async ({ url, listing_id_sha, view }) => {
       const { listing } = await fetchListingRecord(client, {
         url,
         listing_id_sha,
@@ -198,7 +199,7 @@ export function registerHistoryTools(
         listing.events ?? [],
         listing.history ?? []
       );
-      return minifiedResult({
+      return viewResponse(view, {
         listing_id_sha: listing.listingIdSHA,
         // `pid` is the stable short ID (from navigationPageLink's
         // `_pid/` form) — survives re-listings; the `listing_id_sha`

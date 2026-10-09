@@ -7,7 +7,7 @@ import {
 } from '@chrischall/mcp-utils/fetchproxy';
 import { runBoundedBatch } from '@chrischall/mcp-utils';
 import type { CompassClient } from '../client.js';
-import { minifiedResult } from '../mcp.js';
+import { viewArg, viewResponse } from '../view.js';
 import { guardMethods, runRowBatch } from '@chrischall/realty-core';
 import { OVERALL_DEADLINE_MS, type BulkTuning } from './bounded-batch.js';
 import {
@@ -102,9 +102,10 @@ export function registerBulkGetTools(
           .describe(
             'Include the raw `description` on each row. Defaults to `false` — `extracted_features` is always populated.'
           ),
+        view: viewArg(),
       }),
     },
-    async ({ targets, include_description }) => {
+    async ({ targets, include_description, view }) => {
       const ts = targets as BulkGetTarget[];
       // Bounded fan-out + one-shot timeout retry — hoisted from
       // @fetchproxy/server 0.9.x. Unbounded Promise.all over 100+
@@ -150,7 +151,7 @@ export function registerBulkGetTools(
           resultsKey: 'rows',
         }
       );
-      return minifiedResult(envelope);
+      return viewResponse(view, envelope);
     }
   );
 }

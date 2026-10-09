@@ -7,7 +7,7 @@ import {
 } from '@chrischall/mcp-utils/fetchproxy';
 import { runBoundedBatch } from '@chrischall/mcp-utils';
 import type { CompassClient } from '../client.js';
-import { minifiedResult } from '../mcp.js';
+import { viewArg, viewResponse } from '../view.js';
 import { guardMethods, pivotSummary, runRowBatch } from '@chrischall/realty-core';
 import { OVERALL_DEADLINE_MS, type BulkTuning } from './bounded-batch.js';
 import {
@@ -95,7 +95,7 @@ export function registerCompareTools(
                   .string()
                   .optional()
                   .describe(
-                    'Compass listing identifier. Sufficient on its own — the tool resolves the address slug internally via site search before fetching the homedetails page.'
+                    'Compass listing identifier (the SHA inside `<sha>_lid`). Sufficient on its own — the tool fetches /listing/<sha>/view, which 302-redirects to the slugged homedetails page (no extra lookup).'
                   ),
               })
               .passthrough()
@@ -117,9 +117,10 @@ export function registerCompareTools(
           .describe(
             'Include the pivoted `summary` table (one row per compared field, one column per listing). Defaults to `false` — `results[].property.*` already carries every fact and the summary was roughly 30% of response weight. Useful only for human-readable rendering.'
           ),
+        view: viewArg(),
       }),
     },
-    async ({ targets, include_description, include_summary }) => {
+    async ({ targets, include_description, include_summary, view }) => {
       const ts = targets as CompareTarget[];
       // Bounded fan-out + one-shot timeout retry — same helpers the
       // bulk-get tool uses (`@fetchproxy/server` 0.9.x). Compare caps
@@ -157,7 +158,7 @@ export function registerCompareTools(
       );
       const body: typeof envelope & { summary?: SummaryRow[] } = envelope;
       if (include_summary === true) body.summary = buildSummary(envelope.results);
-      return minifiedResult(body);
+      return viewResponse(view, body);
     }
   );
 }

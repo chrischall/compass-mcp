@@ -48,6 +48,59 @@ describe('buildPath', () => {
   });
 });
 
+// fleet-audit#386: a `url` / `listing_id_sha` used to reach any
+// compass.com path with the user's session (`../../account/…`,
+// `/api/v3/…`). Only listing routes are fetchable now.
+describe('listing path validation (fleet-audit#386)', () => {
+  it.each([
+    '/homedetails/123-main-st-queens-ny-11101/1887095624271872617_lid/',
+    'https://www.compass.com/homedetails/foo/abc_lid/?tab=photos',
+    '/homedetails/foo/abc_lid',
+    'https://www.compass.com/app/listing/123-main-st/1n2b3c_pid/',
+    '/listing/1887095624271872617/view',
+    '/homedetails/1-st.-marks-pl-apt-%234-brooklyn-ny/abc_lid/',
+  ])('accepts the listing URL %s', (url) => {
+    expect(() => buildPath({ url })).not.toThrow();
+  });
+
+  it.each([
+    '/api/v3/account/settings',
+    'https://www.compass.com/account/settings/',
+    '/homedetails/foo/../../account/abc_lid/',
+    '/homedetails/foo/%2e%2e/%2E%2E/account/abc_lid/',
+    '/mycompass/favorites/',
+    '/homedetails/foo/abc_lid/extra/',
+    '/homedetails/foo/%2Faccount%2F/abc_lid/',
+    '/homedetails/foo/%E0%A4%A/abc_lid/',
+  ])('rejects the non-listing URL %s', (url) => {
+    expect(() => buildPath({ url })).toThrow(/not a Compass listing URL/);
+  });
+
+  it.each(['../../account/settings/?', 'abc/../x', 'a?b', 'abc def', '%2e%2e'])(
+    'rejects the malformed listing_id_sha %s',
+    async (sha) => {
+      const client = { fetchHtml: vi.fn(), fetchJson: vi.fn() } as unknown as CompassClient;
+      expect(() => buildPath({ listing_id_sha: sha })).toThrow(/not a valid Compass listing_id_sha/);
+      await expect(resolvePathFromSha(client, sha)).rejects.toThrow(
+        /not a valid Compass listing_id_sha/
+      );
+    }
+  );
+
+  it('the tool reports a rejected path without fetching it', async () => {
+    const h = await createTestHarness((server) => registerPropertyTools(server, mockClient));
+    try {
+      const r = await h.callTool('compass_get_property', {
+        listing_id_sha: '../../account/settings/?',
+      });
+      expect(r.isError).toBe(true);
+      expect(mockFetchHtml).not.toHaveBeenCalled();
+    } finally {
+      await h.close();
+    }
+  });
+});
+
 describe('resolvePathFromSha', () => {
   // The sha IS the listing id in `/listing/<id>/view`, and a GET of that
   // path 302-redirects to the canonical `/homedetails/<slug>/<sha>_lid/`

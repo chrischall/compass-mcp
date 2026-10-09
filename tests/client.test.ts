@@ -93,6 +93,38 @@ describe('CompassClient', () => {
     );
   });
 
+  it.each([
+    'https://www.compass.com/login/',
+    'https://www.compass.com/login/?next=%2Fmycompass%2F',
+    'https://www.compass.com/login?next=%2F',
+    'https://www.compass.com/login#signin',
+  ])(
+    'fetchHtml throws SessionNotAuthenticatedError on a %s redirect (fleet-audit#381)',
+    async (url) => {
+      const client = new CompassClient({
+        transport: stubTransport(async () => ({
+          status: 200,
+          body: '<html>login form</html>',
+          url,
+        })),
+      });
+      await expect(client.fetchHtml('/mycompass/favorites')).rejects.toBeInstanceOf(
+        SessionNotAuthenticatedError
+      );
+    }
+  );
+
+  it('fetchHtml does not treat a /login-prefixed listing path as a sign-in page', async () => {
+    const client = new CompassClient({
+      transport: stubTransport(async () => ({
+        status: 200,
+        body: '<html>page</html>',
+        url: 'https://www.compass.com/login-help/',
+      })),
+    });
+    expect(await client.fetchHtml('/login-help/')).toBe('<html>page</html>');
+  });
+
   it('SessionNotAuthenticatedError is the shared @chrischall/mcp-utils class, parameterized for Compass', async () => {
     const upstream = await import('@chrischall/mcp-utils');
     expect(SessionNotAuthenticatedError).toBe(
