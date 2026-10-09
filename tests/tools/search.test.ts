@@ -5,6 +5,7 @@ import {
   findLolResults,
   formatHome,
   registerSearchTools,
+  type SearchInput,
 } from '../../src/tools/search.js';
 import { createTestHarness, parseToolResult } from '../helpers.js';
 
@@ -64,23 +65,13 @@ describe('buildSearchPath', () => {
     ).toBe('/homes-for-sale/x/2-3-bed/500000-1200000-price/type-condo/');
   });
 
-  it('omits a /page-1/ segment for the first page', () => {
-    // Compass canonicalizes page 1 to the unsuffixed URL; appending
-    // /page-1/ produces a redirect, so we drop it.
-    expect(buildSearchPath({ location: 'x', page: 1 })).toBe(
-      '/homes-for-sale/x/'
-    );
-  });
-
-  it('appends a /page-N/ segment after the filters for N > 1', () => {
-    expect(
-      buildSearchPath({
-        location: 'x',
-        beds_min: 2,
-        beds_max: 3,
-        page: 2,
-      })
-    ).toBe('/homes-for-sale/x/2-3-bed/page-2/');
+  it('#87: SearchInput has no page field, so no /page-N/ segment can be emitted', () => {
+    // Compass canonicalizes every /page-N/ back to page 1 (issue #87), so
+    // the input type must not offer a page knob that could re-wire the
+    // dead pagination path.
+    // @ts-expect-error -- `page` was removed from SearchInput (fleet-audit #837)
+    const input: SearchInput = { location: 'x', beds_min: 2, beds_max: 3, page: 2 };
+    expect(buildSearchPath(input)).toBe('/homes-for-sale/x/2-3-bed/');
   });
 });
 

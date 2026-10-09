@@ -43,7 +43,7 @@ src/
   client.ts             # CompassClient.fetchHtml / fetchJson
                         #   + sign-in detection (WAF challenge / /login redirect)
   page-state.ts         # extractUc + extractInitialData + extractAgentProfile + balanced-brace helpers
-  url.ts                # extractPidFromUrl + extractAgentSlug + agentProfilePath
+  url.ts                # extractPidFromUrl + extractAgentSlug
                         #   (urlToPath + locationToSlug re-exported from realty-core)
   features.ts           # loadCommunities (mcp-utils createCachedJsonArrayLoader over COMPASS_COMMUNITIES_FILE)
                         #   + re-exports extractFeatures/ExtractedFeatures from realty-core

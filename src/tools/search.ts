@@ -169,8 +169,6 @@ export interface SearchInput {
   limit?: number;
   /** Zero-based offset into the result set. Only consumed by the tool layer. */
   offset?: number;
-  /** 1-based Compass page index used for URL construction. */
-  page?: number;
 }
 
 /**
@@ -190,11 +188,11 @@ export interface SearchInput {
 export const COMPASS_PAGE_SIZE = 41;
 
 /**
- * Build the `/homes-for-sale/<slug>/<filters>/[page-N/]` path for a
- * search. Order matches Compass's URL canonicalization: beds, then
- * price, then home type, then page. Returns a leading-slash path ready
- * for fetchHtml. `page=1` is left unsuffixed — Compass canonicalizes
- * page 1 to the bare URL and redirects `/page-1/` to it.
+ * Build the `/homes-for-sale/<slug>/<filters>/` path for a search.
+ * Order matches Compass's URL canonicalization: beds, then price, then
+ * home type. Returns a leading-slash path ready for fetchHtml. There is
+ * deliberately no page segment: `/page-N/` canonicalizes back to page 1
+ * (issue #87), so only the first SSR page is reachable.
  */
 export function buildSearchPath(input: SearchInput): string {
   const slug = locationToSlug(input.location);
@@ -214,9 +212,6 @@ export function buildSearchPath(input: SearchInput): string {
     segments.push(`${lo}-${hi}-price`);
   }
   if (input.home_type) segments.push(HOME_TYPE_SLUG[input.home_type]);
-  if (input.page !== undefined && input.page > 1) {
-    segments.push(`page-${input.page}`);
-  }
   const filters = segments.length > 0 ? segments.join('/') + '/' : '';
   return `/homes-for-sale/${slug}/${filters}`;
 }
