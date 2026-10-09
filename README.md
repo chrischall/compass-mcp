@@ -23,6 +23,16 @@ Compass real-estate access as an MCP server for Claude — search listings, fetc
 | `compass_get_saved_homes` | **Not yet supported** — Compass renders /overview/favorites via auth-scoped GraphQL we have not yet identified. Throws a clear "not yet wire" error. | ✓ |
 | `compass_get_saved_searches` | **Not yet supported** — same constraint as saved homes. | ✓ |
 
+## Response size
+
+The listing read tools take an optional `view` argument: `"compact"` (the default) or `"full"`. Compact strips image and avatar URLs (including `primary_photo_url` / `primary_thumbnail_url`) and keeps every other field; `view: "full"` returns the payload with those URLs intact.
+
+Tools that take `view`: `compass_search_properties`, `compass_get_property`, `compass_bulk_get`, `compass_compare_properties`, `compass_get_price_history`, `compass_get_comparable_rentals`, `compass_get_agent_listings`, `compass_get_by_address`.
+
+> **Changed in 1.1.9:** `compass_get_property`, `compass_bulk_get`, `compass_compare_properties`, `compass_get_price_history` and `compass_get_comparable_rentals` used to return every field, media URLs included. They now default to compact like the other read tools. If you relied on photo or avatar URLs from these tools, pass `view: "full"`, or use `compass_get_property_photos` for the gallery.
+
+`compass_get_property_photos` takes no `view` — its gallery URLs are the whole point of the tool, so it always returns them.
+
 ## Acknowledgement of Terms
 
 By using this MCP server, you acknowledge and agree to the following:
