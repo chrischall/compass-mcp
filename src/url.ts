@@ -100,12 +100,3 @@ export function extractAgentSlug(slugOrUrl: string): string {
   // Bare slug.
   return validateAgentSlug(trimmed, slugOrUrl);
 }
-
-/**
- * Build the `/agents/<slug>/` path the FetchproxyTransport fetches from a
- * slug or any accepted agent reference (delegates to `extractAgentSlug`).
- * (Issue #52.)
- */
-export function agentProfilePath(slugOrUrl: string): string {
-  return `/agents/${extractAgentSlug(slugOrUrl)}/`;
-}

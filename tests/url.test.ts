@@ -1,6 +1,5 @@
 import { describe, it, expect } from 'vitest';
 import {
-  agentProfilePath,
   extractAgentSlug,
   extractPidFromUrl,
   locationToSlug,
@@ -115,18 +114,6 @@ describe('extractAgentSlug (#52)', () => {
     // A malformed percent-encoding must surface the clear slug error, not a
     // raw URIError from decodeURIComponent.
     expect(() => extractAgentSlug('/agents/%ZZ/')).toThrow(/slug/i);
-  });
-});
-
-describe('agentProfilePath (#52)', () => {
-  it('builds the /agents/<slug>/ path from a slug', () => {
-    expect(agentProfilePath('paige-mcguirk')).toBe('/agents/paige-mcguirk/');
-  });
-
-  it('accepts a full profile URL and reduces it to the path', () => {
-    expect(
-      agentProfilePath('https://www.compass.com/agents/paige-mcguirk/')
-    ).toBe('/agents/paige-mcguirk/');
   });
 });
 
