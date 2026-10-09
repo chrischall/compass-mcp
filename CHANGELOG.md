@@ -1,5 +1,25 @@
 # Changelog
 
+## [1.1.9](https://github.com/chrischall/compass-mcp/compare/v1.1.8...v1.1.9) (2026-10-09)
+
+
+### Bug Fixes
+
+* annotate tools truthfully and sync manifests with the served tools ([#278](https://github.com/chrischall/compass-mcp/issues/278)) ([7350ea7](https://github.com/chrischall/compass-mcp/commit/7350ea7823c5f035aa54613939d2a794f62ac22d))
+* declare the plugin MCP config under the mcpServers key Claude Code reads ([#279](https://github.com/chrischall/compass-mcp/issues/279)) ([9ba40dd](https://github.com/chrischall/compass-mcp/commit/9ba40ddfcf9e5ad0213cbae0f6f9fee6c7125f3b))
+* **deps:** update @chrischall/mcp-utils to 3.0.0 ([#277](https://github.com/chrischall/compass-mcp/issues/277)) ([4292975](https://github.com/chrischall/compass-mcp/commit/4292975614da2a47c80b5cde6925c936678b6f81))
+* resolve low-severity audit findings ([#272](https://github.com/chrischall/compass-mcp/issues/272)) ([fe2256e](https://github.com/chrischall/compass-mcp/commit/fe2256e24f1d54175d04bca700f42e0850936867))
+
+
+### Refactor
+
+* **search:** drop the dead /page-N/ search segment and unused agentProfilePath ([#276](https://github.com/chrischall/compass-mcp/issues/276)) ([3da01dc](https://github.com/chrischall/compass-mcp/commit/3da01dc107c18240c2e2d40858a1f79d7e057b71))
+
+
+### Documentation
+
+* **tools:** note that listing reads now default to compact; pass view "full" for media URLs ([#275](https://github.com/chrischall/compass-mcp/issues/275)) ([b37bcf3](https://github.com/chrischall/compass-mcp/commit/b37bcf33c5ab1f1facfd4504e8a8feb63ab44b4e)), closes [#273](https://github.com/chrischall/compass-mcp/issues/273)
+
 ## [1.1.8](https://github.com/chrischall/compass-mcp/compare/v1.1.7...v1.1.8) (2026-10-07)
 
 
