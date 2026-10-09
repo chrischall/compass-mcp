@@ -33,7 +33,7 @@
   ],
   "scripts": {
     "build": "tsc --noEmit && npm run bundle",
-    "bundle": "esbuild src/index.ts --bundle --alias:zod/v4=./node_modules/zod/v4/index.cjs --platform=node --format=esm --external:dotenv --banner:js='import { createRequire as __createRequire } from \"module\"; const require = __createRequire(import.meta.url);' --outfile=dist/bundle.js",
+    "bundle": "esbuild src/index.ts --bundle --alias:zod/v4=./node_modules/zod/v4/index.cjs --platform=node --format=esm --banner:js='import { createRequire as __createRequire } from \"module\"; const require = __createRequire(import.meta.url);' --outfile=dist/bundle.js",
     "dev": "node dist/bundle.js",
     "test": "npm run typecheck && vitest run",
     "test:watch": "vitest",
@@ -45,7 +45,6 @@
     "@chrischall/realty-core": "^0.6.2",
     "@fetchproxy/server": "^3.6.0",
     "@modelcontextprotocol/server": "^2.3.0",
-    "dotenv": "^18.0.2",
     "zod": "^4.6.5"
   },
   "devDependencies": {
