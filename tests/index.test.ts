@@ -16,6 +16,11 @@ import { registerByAddressTools } from '../src/tools/by-address.js';
 import { registerAgentListingsTools } from '../src/tools/agent-listings.js';
 import { registerSessionTools } from '../src/tools/session.js';
 import { registerComparableRentalsTools } from '../src/tools/comparable-rentals.js';
+import { registerBulkGetTools } from '../src/tools/bulk-get.js';
+import { registerResolveAddressesTools } from '../src/tools/resolve-addresses.js';
+import { readFileSync } from 'node:fs';
+import { join, dirname } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { createSessionRegistry } from '@chrischall/mcp-utils/session';
 import { createTestHarness } from './helpers.js';
 
@@ -37,6 +42,9 @@ const EXPECTED_TOOLS = [
   'compass_healthcheck',
   'compass_get_by_address',
   'compass_get_agent_listings',
+  'compass_bulk_get',
+  'compass_resolve_addresses',
+  'compass_get_comparable_rentals',
   'compass_register_session',
   'compass_set_active_session',
   'compass_get_session_context',
@@ -61,11 +69,37 @@ describe('tool registration', () => {
       registerHealthcheckTools(server, mockClient);
       registerByAddressTools(server, mockClient);
       registerAgentListingsTools(server, mockClient);
+      registerBulkGetTools(server, mockClient);
+      registerResolveAddressesTools(server, mockClient);
+      registerComparableRentalsTools(server, mockClient);
       registerSessionTools(server, createSessionRegistry());
     });
     const tools = await harness.listTools();
     const names = tools.map((t) => t.name).sort();
     expect(names).toEqual([...EXPECTED_TOOLS].sort());
+  });
+});
+
+// fleet-audit#383: Claude Desktop shows the .mcpb manifest's tools[] at
+// install time, so it must list exactly the registered tools.
+describe('manifest.json', () => {
+  const manifest = JSON.parse(
+    readFileSync(
+      join(dirname(fileURLToPath(import.meta.url)), '..', 'manifest.json'),
+      'utf8'
+    )
+  ) as { description: string; tools: { name: string; description: string }[] };
+
+  it('advertises exactly the registered tools', () => {
+    expect(manifest.tools.map((t) => t.name).sort()).toEqual(
+      [...EXPECTED_TOOLS].sort()
+    );
+    for (const t of manifest.tools) expect(t.description, t.name).toBeTruthy();
+  });
+
+  it('promises no feature the server lacks', () => {
+    expect(manifest.description).not.toMatch(/market report/i);
+    expect(JSON.stringify(manifest.tools)).not.toMatch(/property_id\+listing_id/);
   });
 });
 

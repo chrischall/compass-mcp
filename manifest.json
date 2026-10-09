@@ -4,7 +4,7 @@
   "name": "compass-mcp",
   "display_name": "Compass",
   "version": "1.1.8",
-  "description": "Compass real-estate access for Claude — search listings, fetch property details, market reports, saved homes",
+  "description": "Compass real-estate access for Claude — search listings, resolve addresses, fetch property details, photos and price history, compare homes, and run mortgage/affordability math",
   "author": {
     "name": "Chris Chall",
     "email": "chris.c.hall@gmail.com",
@@ -40,23 +40,71 @@
     },
     {
       "name": "compass_get_property",
-      "description": "Fetch a property's full details by Compass URL or property_id+listing_id"
+      "description": "Fetch a property's full details by Compass URL or listing_id_sha"
     },
     {
-      "name": "compass_get_market_report",
-      "description": "Market report for a Compass region (median prices, days on market, YoY)"
+      "name": "compass_get_property_photos",
+      "description": "The full photo gallery for a Compass listing"
+    },
+    {
+      "name": "compass_get_price_history",
+      "description": "Listing and prior-listing history (listed / sold / price changes) for a Compass property"
+    },
+    {
+      "name": "compass_compare_properties",
+      "description": "Fetch several Compass properties and align their facts side-by-side"
+    },
+    {
+      "name": "compass_bulk_get",
+      "description": "Fetch up to 200 Compass listings by URL or listing_id_sha in one call"
+    },
+    {
+      "name": "compass_get_by_address",
+      "description": "Resolve a street address to a Compass listing's URL and identifiers"
+    },
+    {
+      "name": "compass_resolve_addresses",
+      "description": "Resolve many street addresses to Compass listings in one call"
+    },
+    {
+      "name": "compass_get_comparable_rentals",
+      "description": "Nearby rental listings for a Compass property"
+    },
+    {
+      "name": "compass_get_agent_listings",
+      "description": "A Compass agent's active (and optionally closed) listings"
     },
     {
       "name": "compass_get_saved_homes",
-      "description": "The signed-in user's favorited homes"
+      "description": "The signed-in user's favorited homes (not yet supported — returns an explanatory error)"
     },
     {
       "name": "compass_get_saved_searches",
-      "description": "The signed-in user's saved searches"
+      "description": "The signed-in user's saved searches (not yet supported — returns an explanatory error)"
     },
     {
       "name": "compass_calculate_mortgage",
       "description": "Local PITI mortgage-payment calculator — no network"
+    },
+    {
+      "name": "compass_calculate_affordability",
+      "description": "Local home-affordability calculator — no network"
+    },
+    {
+      "name": "compass_healthcheck",
+      "description": "Confirm the browser bridge, extension and signed-in compass.com tab are responsive"
+    },
+    {
+      "name": "compass_get_session_context",
+      "description": "List registered logical sessions and the active one"
+    },
+    {
+      "name": "compass_register_session",
+      "description": "Register or refresh a logical session keyed by account identity"
+    },
+    {
+      "name": "compass_set_active_session",
+      "description": "Switch the active logical session"
     }
   ]
 }
