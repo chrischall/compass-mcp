@@ -1,7 +1,7 @@
 import { z } from 'zod';
 import type { McpServer } from '@modelcontextprotocol/server';
 import type { CompassClient } from '../client.js';
-import { minifiedResult } from '../mcp.js';
+import { viewArg, viewResponse } from '../view.js';
 import { extractUc } from '../page-state.js';
 import { fetchListingRecord } from './properties.js';
 import {
@@ -60,9 +60,10 @@ export function registerComparableRentalsTools(
           .positive()
           .optional()
           .describe('Max rental candidates to return. Default 20.'),
+        view: viewArg(),
       }),
     },
-    async ({ url, listing_id_sha, limit }) => {
+    async ({ url, listing_id_sha, limit, view }) => {
       const { listing } = await fetchListingRecord(client, {
         url,
         listing_id_sha,
@@ -77,7 +78,7 @@ export function registerComparableRentalsTools(
       const locationSeed =
         loc.zipCode ?? (cityState || loc.prettyAddress) ?? '';
       if (!locationSeed) {
-        return minifiedResult({
+        return viewResponse(view, {
           target: {
             listing_id_sha: listing.listingIdSHA,
             city: loc.city,
@@ -106,7 +107,7 @@ export function registerComparableRentalsTools(
         // target would).
         .filter((h) => h.listing_id_sha !== listing.listingIdSHA)
         .slice(0, limit ?? 20);
-      return minifiedResult({
+      return viewResponse(view, {
         target: {
           listing_id_sha: listing.listingIdSHA,
           city: loc.city,

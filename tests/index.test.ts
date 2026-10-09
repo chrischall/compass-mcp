@@ -144,3 +144,43 @@ describe('tool descriptions', () => {
     }
   });
 });
+
+// fleet-audit#385: every read tool that returns Compass listing payloads
+// takes the fleet `view` arg. compass_get_property_photos is exempt by
+// design (its product IS the gallery — see src/view.ts).
+describe('view convention', () => {
+  it('every listing read tool declares `view`, and photos does not', async () => {
+    const h = await createTestHarness((server) => {
+      registerSearchTools(server, mockClient);
+      registerPropertyTools(server, mockClient);
+      registerHistoryTools(server, mockClient);
+      registerCompareTools(server, mockClient);
+      registerPhotosTools(server, mockClient);
+      registerByAddressTools(server, mockClient);
+      registerAgentListingsTools(server, mockClient);
+      registerBulkGetTools(server, mockClient);
+      registerComparableRentalsTools(server, mockClient);
+    });
+    try {
+      const { tools } = await h.client.listTools();
+      const hasView = (name: string) => {
+        const t = tools.find((x) => x.name === name)!;
+        return 'view' in ((t.inputSchema as { properties?: object }).properties ?? {});
+      };
+      const missing = [
+        'compass_search_properties',
+        'compass_get_property',
+        'compass_get_price_history',
+        'compass_compare_properties',
+        'compass_get_by_address',
+        'compass_get_agent_listings',
+        'compass_bulk_get',
+        'compass_get_comparable_rentals',
+      ].filter((n) => !hasView(n));
+      expect(missing).toEqual([]);
+      expect(hasView('compass_get_property_photos')).toBe(false);
+    } finally {
+      await h.close();
+    }
+  });
+});

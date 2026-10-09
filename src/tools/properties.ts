@@ -1,7 +1,7 @@
 import { z } from 'zod';
 import type { McpServer } from '@modelcontextprotocol/server';
 import type { CompassClient } from '../client.js';
-import { minifiedResult } from '../mcp.js';
+import { viewArg, viewResponse } from '../view.js';
 import { extractInitialData } from '../page-state.js';
 import { extractAgentSlug, extractPidFromUrl, urlToPath } from '../url.js';
 import { compassListingUrl } from './by-address.js';
@@ -812,14 +812,16 @@ export function registerPropertyTools(
           .describe(
             'Include the raw `description` (Compass marketing copy) in the response. Defaults to `false` — `extracted_features` is always populated and usually covers the common needs.'
           ),
+        view: viewArg(),
       }),
     },
-    async ({ url, listing_id_sha, include_description }) => {
+    async ({ url, listing_id_sha, include_description, view }) => {
       const { listing } = await fetchListingRecord(client, {
         url,
         listing_id_sha,
       });
-      return minifiedResult(
+      return viewResponse(
+        view,
         format(listing, { includeDescription: include_description })
       );
     }
