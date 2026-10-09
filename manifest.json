@@ -30,7 +30,25 @@
       "command": "node",
       "args": [
         "${__dirname}/dist/bundle.js"
-      ]
+      ],
+      "env": {
+        "COMPASS_WS_PORT": "${user_config.compass_ws_port}",
+        "COMPASS_COMMUNITIES_FILE": "${user_config.compass_communities_file}"
+      }
+    }
+  },
+  "user_config": {
+    "compass_ws_port": {
+      "type": "string",
+      "title": "fetchproxy WebSocket port",
+      "description": "Override the fetchproxy WebSocket port (default 37149).",
+      "required": false
+    },
+    "compass_communities_file": {
+      "type": "file",
+      "title": "Communities file",
+      "description": "Path to a JSON string-array of community names for feature extraction; overrides the built-in Lake Lure / mountain-NC default vocabulary.",
+      "required": false
     }
   },
   "tools": [

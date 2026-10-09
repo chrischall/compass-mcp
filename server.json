@@ -21,6 +21,12 @@
           "description": "Override the fetchproxy WebSocket port (default 37149).",
           "isRequired": false,
           "format": "string"
+        },
+        {
+          "name": "COMPASS_COMMUNITIES_FILE",
+          "description": "Path to a JSON string-array of community names for feature extraction; overrides the built-in Lake Lure / mountain-NC default vocabulary.",
+          "isRequired": false,
+          "format": "filepath"
         }
       ]
     }
