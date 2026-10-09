@@ -250,6 +250,33 @@ describe('addressMatchesQuery', () => {
       ).toBe(true);
     });
 
+    // fleet-audit#991: "NE" is also Nebraska. A candidate whose street
+    // carries a quadrant the caller did not type, and whose subtitle drops
+    // its own state, used to be rejected as a wrong-state match.
+    it('does not read a candidate-only street quadrant ("NE") as a conflicting state', () => {
+      expect(
+        addressMatchesQuery('123 Main St NE, Washington', { address: '123 Main St', state: 'DC' })
+      ).toBe(true);
+      expect(
+        addressMatchesQuery('123 Main St SW, Washington, DC 20024', {
+          address: '123 Main St',
+          state: 'DC',
+        })
+      ).toBe(true);
+      expect(
+        addressMatchesQuery('123 Main St NE', { address: '123 Main St', state: 'DC' })
+      ).toBe(true);
+    });
+
+    it('still treats "NE" in the locality as Nebraska', () => {
+      expect(
+        addressMatchesQuery('123 Main St, Omaha, NE 68102', { address: '123 Main St', state: 'IA' })
+      ).toBe(false);
+      expect(
+        addressMatchesQuery('123 Main St, Omaha, NE', { address: '123 Main St', state: 'NE' })
+      ).toBe(true);
+    });
+
     it('ignores an unrecognised query state / ZIP rather than rejecting', () => {
       expect(
         addressMatchesQuery('10 Main St, Lake Lure, NC 28746', {
