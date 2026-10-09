@@ -158,14 +158,15 @@ export class CompassClient {
 
   private throwIfSignInPage(result: FetchResult): void {
     // Compass signals a missing session via:
-    //   1. Redirect to /login (URL match).
+    //   1. Redirect to /login (URL match) — with or without Compass's
+    //      usual trailing slash, query string or fragment (fleet-audit#381).
     //   2. AWS WAF challenge interstitial. Marker: the AWS WAF
     //      `awswaf.com/...challenge.js` script is referenced inline.
     //
     // We deliberately do NOT body-match `/login` since every signed-in
     // Compass page has a "Sign in / Log in" link in its nav.
     const looksLikeSignIn =
-      /\/login(\?|$)/.test(result.url) ||
+      /\/login\/?(?:[?#]|$)/.test(result.url) ||
       (result.body.includes('awswaf.com') &&
         result.body.includes('challenge.js') &&
         result.body.length < 80_000);
