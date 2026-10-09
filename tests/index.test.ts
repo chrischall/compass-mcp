@@ -15,6 +15,7 @@ import { registerHealthcheckTools } from '../src/tools/healthcheck.js';
 import { registerByAddressTools } from '../src/tools/by-address.js';
 import { registerAgentListingsTools } from '../src/tools/agent-listings.js';
 import { registerSessionTools } from '../src/tools/session.js';
+import { registerComparableRentalsTools } from '../src/tools/comparable-rentals.js';
 import { createSessionRegistry } from '@chrischall/mcp-utils/session';
 import { createTestHarness } from './helpers.js';
 
@@ -65,5 +66,47 @@ describe('tool registration', () => {
     const tools = await harness.listTools();
     const names = tools.map((t) => t.name).sort();
     expect(names).toEqual([...EXPECTED_TOOLS].sort());
+  });
+});
+
+// fleet-audit#384: these strings go straight to the model. The sha path
+// is a direct `/listing/<sha>/view` fetch (no site-search round trip), and
+// the package version is not something the saved-tools error should pin.
+describe('tool descriptions', () => {
+  it('no sha parameter claims a site-search slug lookup', async () => {
+    const h = await createTestHarness((server) => {
+      registerPropertyTools(server, mockClient);
+      registerHistoryTools(server, mockClient);
+      registerPhotosTools(server, mockClient);
+      registerCompareTools(server, mockClient);
+      registerComparableRentalsTools(server, mockClient);
+    });
+    try {
+      const { tools } = await h.client.listTools();
+      const stale = tools
+        .filter((t) => /site search|slug is resolved internally/i.test(JSON.stringify(t)))
+        .map((t) => t.name);
+      expect(stale).toEqual([]);
+      for (const t of tools) {
+        const sha = JSON.stringify(
+          (t.inputSchema as { properties?: Record<string, unknown> }).properties
+        );
+        expect(sha, t.name).toMatch(/\/listing\/<sha>\/view/);
+      }
+    } finally {
+      await h.close();
+    }
+  });
+
+  it('the saved-tools error does not hard-code a package version', async () => {
+    const h = await createTestHarness((server) => registerSavedTools(server, mockClient));
+    try {
+      const r = await h.callTool('compass_get_saved_homes', {});
+      const text = (r.content[0] as { text: string }).text;
+      expect(text).not.toMatch(/\d+\.\d+\.\d+/);
+      expect(text).toMatch(/doesn['’]t yet wire up saved listings/);
+    } finally {
+      await h.close();
+    }
   });
 });

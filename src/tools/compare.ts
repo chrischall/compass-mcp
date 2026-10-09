@@ -95,7 +95,7 @@ export function registerCompareTools(
                   .string()
                   .optional()
                   .describe(
-                    'Compass listing identifier. Sufficient on its own — the tool resolves the address slug internally via site search before fetching the homedetails page.'
+                    'Compass listing identifier (the SHA inside `<sha>_lid`). Sufficient on its own — the tool fetches /listing/<sha>/view, which 302-redirects to the slugged homedetails page (no extra lookup).'
                   ),
               })
               .passthrough()

@@ -52,7 +52,7 @@ export function registerComparableRentalsTools(
           .string()
           .optional()
           .describe(
-            'Compass listing identifier. Sufficient on its own — the slug is resolved internally.'
+            'Compass listing identifier (the SHA inside `<sha>_lid`). Sufficient on its own — the tool fetches /listing/<sha>/view, which 302-redirects to the slugged homedetails page (no extra lookup).'
           ),
         limit: z
           .number()

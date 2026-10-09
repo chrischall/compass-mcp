@@ -23,7 +23,7 @@ import { z } from 'zod';
  */
 
 const NOT_YET_SUPPORTED =
-  "compass-mcp 0.10.0 doesn't yet wire up saved listings / saved searches. " +
+  "compass-mcp doesn't yet wire up saved listings / saved searches. " +
   "Compass renders these pages via an auth-scoped GraphQL endpoint that " +
   "isn't reachable from a one-shot fetchproxy call. Track the issue at " +
   'https://github.com/chrischall/compass-mcp/issues — a future version will land this once the endpoint is identified.';
