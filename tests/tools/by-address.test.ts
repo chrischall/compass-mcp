@@ -299,6 +299,21 @@ describe('addressMatchesQuery', () => {
   });
 });
 
+describe('addressMatchesQuery — full address pasted into `address` (fleet-audit#1226)', () => {
+  const q = { address: '126 Sleeping Bear Ln, Lake Lure, NC 28746' };
+  it('matches the street-only card line (realty-core 0.6.4 scores the street segment)', () => {
+    expect(addressMatchesQuery('126 Sleeping Bear Ln', q)).toBe(true);
+    expect(addressMatchesQuery('126 Sleeping Bear Lane', q)).toBe(true);
+  });
+  it('matches a candidate that carries the same locality', () => {
+    expect(addressMatchesQuery('126 Sleeping Bear Ln, Lake Lure, NC 28746', q)).toBe(true);
+  });
+  it('still rejects a different house or a different locality', () => {
+    expect(addressMatchesQuery('128 Sleeping Bear Ln', q)).toBe(false);
+    expect(addressMatchesQuery('126 Sleeping Bear Ln, Raleigh, NC 27601', q)).toBe(false);
+  });
+});
+
 describe('compassListingUrl (deduped URL ladder)', () => {
   const listing = {
     listingIdSHA: 'abc',
