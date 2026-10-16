@@ -69,6 +69,7 @@ That's it. No API keys, no env vars.
 ### Diagnostics & session
 
 - **`compass_healthcheck`** — Round-trips a no-op request (`/robots.txt`) through the full bridge to confirm the WebSocket bridge is up, the extension is connected, and the signed-in tab is responsive — in one call.
+- **`compass_register_session`** — Registers (or refreshes) a logical session keyed by account identity, so several signed-in accounts can be switched between.
 - **`compass_get_session_context`** — Lists every registered session and the active one.
 - **`compass_set_active_session`** — Flips which registered session answers future requests.
 

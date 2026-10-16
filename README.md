@@ -19,9 +19,17 @@ Compass real-estate access as an MCP server for Claude — search listings, fetc
 | `compass_compare_properties` | Side-by-side comparison of up to 25 properties with an opt-in aligned summary table. Per-target errors captured per-row. Concurrent fetches. | |
 | `compass_calculate_affordability` | Local affordability calculator — max purchase price from income + DTI + rates. No network. | |
 | `compass_get_by_address` | Resolve a free-text street address to the canonical Compass URL, `listing_id_sha`, and `pid` in one call. Returns `{ resolved: false, error: "no listing found" }` rather than throwing when there is no match. | |
+| `compass_resolve_addresses` | Bulk version of `compass_get_by_address`: resolves many addresses in one call with the same rung walker and a per-row error contract. | |
+| `compass_bulk_get` | Fetch up to 200 listings by URL or `listing_id_sha` in one call. One row per target; per-target errors captured per-row. | |
+| `compass_get_comparable_rentals` | Nearby rental listings for a property, searched in the target's own city/state/ZIP. | |
+| `compass_get_agent_listings` | A Compass agent's active listings (closed deals via `include_closed`). | |
 | `compass_calculate_mortgage` | Local PITI calculator — principal+interest, taxes, insurance, HOA, PMI. No network. | |
 | `compass_get_saved_homes` | **Not yet supported** — Compass renders /overview/favorites via auth-scoped GraphQL we have not yet identified. Throws a clear "not yet wire" error. | ✓ |
 | `compass_get_saved_searches` | **Not yet supported** — same constraint as saved homes. | ✓ |
+| `compass_healthcheck` | Round-trips a no-op request through the bridge to confirm the WebSocket bridge, the extension and the signed-in compass.com tab are responsive. | |
+| `compass_register_session` | Register or refresh a logical session keyed by account identity (local; no network). | |
+| `compass_set_active_session` | Switch which registered session answers future requests (local). | |
+| `compass_get_session_context` | List the registered sessions and the active one (local). | |
 
 ## Response size
 

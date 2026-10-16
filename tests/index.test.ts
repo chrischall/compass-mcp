@@ -97,6 +97,20 @@ describe('manifest.json', () => {
     for (const t of manifest.tools) expect(t.description, t.name).toBeTruthy();
   });
 
+  // fleet-audit#1227: the README tool table and the skill must list every
+  // served tool too, or a reader cannot discover the bulk resolver or the
+  // diagnostic healthcheck.
+  it('README.md tool table and skills/compass/SKILL.md name every registered tool', () => {
+    const root = join(dirname(fileURLToPath(import.meta.url)), '..');
+    const readmeRows = readFileSync(join(root, 'README.md'), 'utf8')
+      .split('\n')
+      .filter((l) => l.startsWith('| `compass_'))
+      .join('\n');
+    const skill = readFileSync(join(root, 'skills', 'compass', 'SKILL.md'), 'utf8');
+    expect(EXPECTED_TOOLS.filter((t) => !readmeRows.includes(`\`${t}\``))).toEqual([]);
+    expect(EXPECTED_TOOLS.filter((t) => !skill.includes(`\`${t}\``))).toEqual([]);
+  });
+
   it('promises no feature the server lacks', () => {
     expect(manifest.description).not.toMatch(/market report/i);
     expect(JSON.stringify(manifest.tools)).not.toMatch(/property_id\+listing_id/);
