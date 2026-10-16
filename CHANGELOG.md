@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.1.11](https://github.com/chrischall/compass-mcp/compare/v1.1.10...v1.1.11) (2026-10-16)
+
+
+### Bug Fixes
+
+* **deps:** bump realty-core to 0.6.4 so pasted full addresses resolve ([#283](https://github.com/chrischall/compass-mcp/issues/283)) ([00a99cf](https://github.com/chrischall/compass-mcp/commit/00a99cfeab157abb8242a2358217113c6c664884))
+* **plugin:** launch the published package so marketplace installs start ([#285](https://github.com/chrischall/compass-mcp/issues/285)) ([0fc5db0](https://github.com/chrischall/compass-mcp/commit/0fc5db0f0385f26abf2c0a3e4a50aaf515a5e710))
+
 ## [1.1.10](https://github.com/chrischall/compass-mcp/compare/v1.1.9...v1.1.10) (2026-10-11)
 
 
