@@ -42,3 +42,18 @@ egress:
   # strings in src/ (by-address.ts, search.ts, photos.ts, ...) only
   # build URLs that are returned in tool results.
   allow: []
+examples:
+  # Sample prompts for the public catalog. Every one maps to a real,
+  # read-only tool; all need a signed-in compass.com tab (the bridge).
+  - prompt: >-
+      Find houses for sale in Asheville, NC under $600,000 with at least 3
+      bedrooms.
+    note: Searches Compass listings by location, price and beds.
+  - prompt: >-
+      Find the Compass listing for a street address I give you and walk me
+      through its price history.
+    note: Resolves the address to a listing, then reads its listing-history events.
+  - prompt: >-
+      Compare these two Compass listings side by side and estimate the monthly
+      mortgage on each with 20% down.
+    note: Paste two Compass listing URLs; uses the compare and mortgage tools.
