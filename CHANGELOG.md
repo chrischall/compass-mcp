@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.1.12](https://github.com/chrischall/compass-mcp/compare/v1.1.11...v1.1.12) (2026-10-19)
+
+
+### Documentation
+
+* **mint:** add sample prompts for the public catalog ([#290](https://github.com/chrischall/compass-mcp/issues/290)) ([7b5121d](https://github.com/chrischall/compass-mcp/commit/7b5121d6f2e92c106f81934d670778b24ffa8b0a))
+
 ## [1.1.11](https://github.com/chrischall/compass-mcp/compare/v1.1.10...v1.1.11) (2026-10-16)
 
 
