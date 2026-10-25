@@ -1,5 +1,17 @@
 # Changelog
 
+## [1.1.12](https://github.com/chrischall/compass-mcp/compare/v1.1.11...v1.1.12) (2026-10-25)
+
+
+### Bug Fixes
+
+* **deps:** bump the production-dependencies group with 2 updates ([#292](https://github.com/chrischall/compass-mcp/issues/292)) ([abc6c00](https://github.com/chrischall/compass-mcp/commit/abc6c003f783d59a08ed4535a9e0fdf9fa3a2d84))
+
+
+### Documentation
+
+* **mint:** add sample prompts for the public catalog ([#290](https://github.com/chrischall/compass-mcp/issues/290)) ([7b5121d](https://github.com/chrischall/compass-mcp/commit/7b5121d6f2e92c106f81934d670778b24ffa8b0a))
+
 ## [1.1.11](https://github.com/chrischall/compass-mcp/compare/v1.1.10...v1.1.11) (2026-10-16)
 
 
