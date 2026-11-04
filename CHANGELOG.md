@@ -1,5 +1,23 @@
 # Changelog
 
+## [1.2.0](https://github.com/chrischall/compass-mcp/compare/v1.1.11...v1.2.0) (2026-11-04)
+
+
+### Features
+
+* context-group hints ([#295](https://github.com/chrischall/compass-mcp/issues/295)) ([f1f8daf](https://github.com/chrischall/compass-mcp/commit/f1f8daffc6a59e67c38e4f4d953a9b9bedca8fa7))
+
+
+### Bug Fixes
+
+* **deps:** bump the production-dependencies group across 1 directory with 2 updates ([#294](https://github.com/chrischall/compass-mcp/issues/294)) ([abe5d77](https://github.com/chrischall/compass-mcp/commit/abe5d775fc62831968914830e5090f34cbf412b3))
+* **deps:** bump the production-dependencies group with 2 updates ([#292](https://github.com/chrischall/compass-mcp/issues/292)) ([abc6c00](https://github.com/chrischall/compass-mcp/commit/abc6c003f783d59a08ed4535a9e0fdf9fa3a2d84))
+
+
+### Documentation
+
+* **mint:** add sample prompts for the public catalog ([#290](https://github.com/chrischall/compass-mcp/issues/290)) ([7b5121d](https://github.com/chrischall/compass-mcp/commit/7b5121d6f2e92c106f81934d670778b24ffa8b0a))
+
 ## [1.1.11](https://github.com/chrischall/compass-mcp/compare/v1.1.10...v1.1.11) (2026-10-16)
 
 
