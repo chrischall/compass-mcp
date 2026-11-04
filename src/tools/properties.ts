@@ -17,6 +17,7 @@ import {
   buildHyperlinkFormula,
   collectAddressAlternates as collectAddressAlternatesCore,
 } from '@chrischall/realty-core';
+import { homeMeta } from './hints.js';
 
 /**
  * Compass homedetails: GET /homedetails/<slug>/<listingIdSHA>_lid/
@@ -793,6 +794,7 @@ export function registerPropertyTools(
         idempotentHint: true,
         openWorldHint: true,
       },
+      _meta: homeMeta('lookup', ['house', 'home', 'listing', 'property details']),
       inputSchema: z.object({
         url: z
           .string()

@@ -4,6 +4,7 @@ import type { CompassClient } from '../client.js';
 import { minifiedResult } from '../mcp.js';
 import { extractPidFromUrl } from '../url.js';
 import { fetchListingRecord, type RawListing } from './properties.js';
+import { homeMeta } from './hints.js';
 
 /**
  * Compass photo galleries live at `listing.media[]` on the homedetails
@@ -78,6 +79,7 @@ export function registerPhotosTools(
         idempotentHint: true,
         openWorldHint: true,
       },
+      _meta: homeMeta('lookup', ['photos', 'pictures']),
       inputSchema: z.object({
         url: z
           .string()

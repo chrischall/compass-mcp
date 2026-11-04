@@ -3,6 +3,7 @@ import {
   registerSessionTools as registerSharedSessionTools,
   type SessionRegistry,
 } from '@chrischall/mcp-utils/session';
+import { homeMeta, withMintMeta, type MintMeta } from './hints.js';
 
 /**
  * MCP tool surface for the Compass session registry.
@@ -43,7 +44,7 @@ export function registerSessionTools(
   server: McpServer,
   registry: SessionRegistry
 ): void {
-  registerSharedSessionTools(withAdditiveSessionWrites(server), registry, {
+  registerSharedSessionTools(withAdditiveSessionWrites(withMintMeta(server, SESSION_MINT)), registry, {
     prefix: 'compass',
     serviceLabel: 'Compass',
     // Nothing in compass-mcp reads the registry to route a request — every
@@ -55,6 +56,17 @@ export function registerSessionTools(
       'extension is signed into; to read a different account, sign that tab into it.',
   });
 }
+
+/**
+ * Group hints for the trio (the shared registrar takes no `_meta`). The
+ * context read is a lookup; the two writes are process-local bookkeeping,
+ * not a change to anything at Compass, so they are `other`.
+ */
+const SESSION_MINT: Record<string, MintMeta> = {
+  compass_get_session_context: homeMeta('lookup'),
+  compass_register_session: homeMeta('other'),
+  compass_set_active_session: homeMeta('other'),
+};
 
 /**
  * The two session writes, classified by the inverse test. The shared

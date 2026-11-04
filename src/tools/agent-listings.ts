@@ -5,6 +5,7 @@ import { viewArg, viewResponse } from '../view.js';
 import { extractAgentProfile } from '../page-state.js';
 import { extractAgentSlug } from '../url.js';
 import { format, type RawListing } from './properties.js';
+import { homeMeta } from './hints.js';
 
 /**
  * Compass agent profile: GET /agents/<slug>/
@@ -123,6 +124,7 @@ export function registerAgentListingsTools(
         idempotentHint: true,
         openWorldHint: true,
       },
+      _meta: homeMeta('lookup', ['realtor', 'agent', 'agent listings']),
       inputSchema: z.object({
         view: viewArg(),
         slug: z

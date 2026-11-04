@@ -15,6 +15,7 @@ import {
   format,
   type FormattedProperty,
 } from './properties.js';
+import { homeMeta } from './hints.js';
 
 /**
  * Fetch + align N Compass properties for side-by-side comparison.
@@ -80,6 +81,7 @@ export function registerCompareTools(
         idempotentHint: true,
         openWorldHint: true,
       },
+      _meta: homeMeta('lookup', ['compare homes', 'side by side']),
       inputSchema: z.object({
         targets: z
           .array(

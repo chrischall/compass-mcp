@@ -21,6 +21,7 @@ import {
   extractAddressCandidates,
   type OmnisuggestResponse,
 } from './typeahead.js';
+import { homeMeta } from './hints.js';
 
 /**
  * `compass_get_by_address` — resolve a free-text street address to the
@@ -620,6 +621,7 @@ export function registerByAddressTools(
         idempotentHint: true,
         openWorldHint: true,
       },
+      _meta: homeMeta('lookup', ['address', 'look up an address']),
       inputSchema: z.object({
         view: viewArg(),
         address: z
