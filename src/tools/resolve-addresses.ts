@@ -18,6 +18,7 @@ import {
   type ByAddressInput,
   type MatchedVia,
 } from './by-address.js';
+import { homeMeta } from './hints.js';
 
 /**
  * `compass_resolve_addresses` — bulk address-to-URL resolver.
@@ -194,6 +195,7 @@ export function registerResolveAddressesTools(
         idempotentHint: true,
         openWorldHint: true,
       },
+      _meta: homeMeta('lookup'),
       inputSchema: z.object({
         addresses: z
           .array(

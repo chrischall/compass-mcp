@@ -4,6 +4,7 @@ import type { CompassClient } from '../client.js';
 import { extractUc } from '../page-state.js';
 import { extractPidFromUrl, locationToSlug } from '../url.js';
 import { viewArg, viewResponse } from '../view.js';
+import { homeMeta } from './hints.js';
 
 /**
  * Compass's search results are server-rendered from
@@ -267,6 +268,7 @@ export function registerSearchTools(
         idempotentHint: true,
         openWorldHint: true,
       },
+      _meta: homeMeta('lookup', ['homes for sale', 'houses for sale', 'listings', 'real estate', 'house hunting']),
       inputSchema: z.object({
         view: viewArg(),
         location: z

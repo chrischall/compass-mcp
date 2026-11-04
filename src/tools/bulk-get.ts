@@ -15,6 +15,7 @@ import {
   format,
   type FormattedProperty,
 } from './properties.js';
+import { homeMeta } from './hints.js';
 
 /**
  * `compass_bulk_get` — unbounded structured fetch for Compass listings.
@@ -71,6 +72,7 @@ export function registerBulkGetTools(
         idempotentHint: true,
         openWorldHint: true,
       },
+      _meta: homeMeta('lookup'),
       inputSchema: z.object({
         targets: z
           .array(

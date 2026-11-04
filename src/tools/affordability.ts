@@ -7,6 +7,7 @@ import {
   type AffordabilityResult,
 } from '@chrischall/realty-core';
 import { minifiedResult } from '../mcp.js';
+import { homeMeta, withMintMeta } from './hints.js';
 
 /**
  * Local-only affordability calculator. Solves for max home price under
@@ -36,9 +37,11 @@ export function computeAffordability(
 export function registerAffordabilityTools(server: McpServer): void {
   // realty-core's shared registrar (fleet-audit#1090): schema (with the
   // MAX_LOAN_TERM_YEARS cap), description and math.
-  registerAffordabilityTool(server, {
-    z,
-    prefix: 'compass',
-    toResult: minifiedResult,
-  });
+  // It takes no `_meta`; the view adds the group hint.
+  registerAffordabilityTool(
+    withMintMeta(server, {
+      compass_calculate_affordability: homeMeta('lookup', ['afford', 'how much house', 'budget']),
+    }),
+    { z, prefix: 'compass', toResult: minifiedResult }
+  );
 }

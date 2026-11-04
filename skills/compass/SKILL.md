@@ -86,6 +86,14 @@ That's it. No API keys, no env vars.
 - "Compare these three Compass listings" → `compass_compare_properties`
 - "Monthly payment on a $500k home, 20% down, 6.5% rate" → `compass_calculate_mortgage`
 
+## In context groups
+
+compass-mcp joins the **home** group. Every tool except `compass_healthcheck` carries a `_meta.mint` hint with `domain: home`; every read is a `lookup` (the session-registry writes are `other`).
+
+- **No canonical reads.** Compass is a listings search: every read needs a location, address or listing the person names, so it answers no "what's new / due / on at home?" question by itself, and it declares no `subject` (there is no listable set of the person's homes or accounts).
+- **Compound asks** reach it by name, not by intent: "anything new at home, and what's 12 Elm St listed at on Compass?" — the group answers the first half from its canonical members and routes the second to `compass_get_by_address` → `compass_get_property`.
+- **Browser-bridged.** Every network call rides the signed-in compass.com tab through the ContextMint Bridge, so when the browser is closed the group answers "Compass needs your browser open" for it rather than failing the whole ask. The calculators (`compass_calculate_mortgage` / `compass_calculate_affordability`) are local and still answer.
+
 ## Gotchas
 
 - **Sign-in required.** If the user isn't signed into compass.com in the bridged Chrome tab, network tools fail with `SessionNotAuthenticatedError`. Local-math tools work either way.

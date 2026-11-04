@@ -10,6 +10,7 @@ import {
   type FormattedHome,
   buildSearchPath,
 } from './search.js';
+import { homeMeta } from './hints.js';
 
 /**
  * `compass_get_comparable_rentals` — surface nearby rental listings for
@@ -41,6 +42,7 @@ export function registerComparableRentalsTools(
         idempotentHint: true,
         openWorldHint: true,
       },
+      _meta: homeMeta('lookup', ['rentals', 'rent', 'rental comps']),
       inputSchema: z.object({
         url: z
           .string()

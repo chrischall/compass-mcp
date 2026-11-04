@@ -7,6 +7,7 @@ import {
   type MortgageBreakdown,
 } from '@chrischall/realty-core';
 import { minifiedResult } from '../mcp.js';
+import { homeMeta, withMintMeta } from './hints.js';
 
 /**
  * Local-only mortgage / PITI calculator. No network — fully
@@ -53,10 +54,16 @@ export const toCompassMortgage: (b: MortgageBreakdown) => CompassMortgageResult 
  * description and math all live there.
  */
 export function registerMortgageTools(server: McpServer): void {
-  registerMortgageTool(server, {
-    z,
-    prefix: 'compass',
-    shape: 'lean',
-    toResult: minifiedResult,
-  });
+  // realty-core's registrar takes no `_meta`; the view adds the group hint.
+  registerMortgageTool(
+    withMintMeta(server, {
+      compass_calculate_mortgage: homeMeta('lookup', ['mortgage', 'monthly payment']),
+    }),
+    {
+      z,
+      prefix: 'compass',
+      shape: 'lean',
+      toResult: minifiedResult,
+    }
+  );
 }

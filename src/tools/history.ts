@@ -11,6 +11,7 @@ import {
   mapEventType,
   type NormalizedEventType as CoreEventType,
 } from '@chrischall/realty-core';
+import { homeMeta } from './hints.js';
 
 /**
  * Compass embeds price history as two arrays on the listing record:
@@ -169,6 +170,7 @@ export function registerHistoryTools(
         idempotentHint: true,
         openWorldHint: true,
       },
+      _meta: homeMeta('lookup', ['price history', 'sold price', 'price drop']),
       inputSchema: z.object({
         url: z
           .string()

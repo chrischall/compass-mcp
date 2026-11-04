@@ -1,6 +1,7 @@
 import type { McpServer } from '@modelcontextprotocol/server';
 import type { CompassClient } from '../client.js';
 import { z } from 'zod';
+import { homeMeta } from './hints.js';
 
 /**
  * Compass account surfaces (favorites + saved searches) are a known
@@ -44,6 +45,7 @@ export function registerSavedTools(
         idempotentHint: true,
         openWorldHint: true,
       },
+      _meta: homeMeta('lookup', ['saved homes', 'favorites']),
       inputSchema: z.object({}),
     },
     async () => {
@@ -63,6 +65,7 @@ export function registerSavedTools(
         idempotentHint: true,
         openWorldHint: true,
       },
+      _meta: homeMeta('lookup', ['saved searches']),
       inputSchema: z.object({}),
     },
     async () => {
