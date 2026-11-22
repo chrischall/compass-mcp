@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.2.1](https://github.com/chrischall/compass-mcp/compare/v1.2.0...v1.2.1) (2026-11-22)
+
+
+### Bug Fixes
+
+* **deps:** bump @chrischall/mcp-utils ([#297](https://github.com/chrischall/compass-mcp/issues/297)) ([61ec81f](https://github.com/chrischall/compass-mcp/commit/61ec81f455a87cbba0942736e85f5daa3b2dc312))
+* **deps:** bump the production-dependencies group with 2 updates ([#299](https://github.com/chrischall/compass-mcp/issues/299)) ([8d13b63](https://github.com/chrischall/compass-mcp/commit/8d13b638bc49f85e7eb7efe11e199538aff763ca))
+
 ## [1.2.0](https://github.com/chrischall/compass-mcp/compare/v1.1.11...v1.2.0) (2026-11-04)
 
 
